@@ -1,9 +1,9 @@
 import convertRange from 'sver/convert-range';
 import SystemJS from 'systemjs';
 
-import { createEsmCdnLoader, addSyntheticDefaultExports } from './esmLoader';
-import { supportsDynamicImport } from './featureDetection';
+import { createEsmCdnLoader, supportsDynamicImport } from './esmLoader';
 import { createLocalLoader } from './localLoader';
+import { addSyntheticDefaultExports } from './syntheticImports';
 import { createTranspiler } from './transpiler';
 
 const ESM_CDN_URL = 'https://dev.jspm.io';
@@ -61,6 +61,7 @@ export class Runtime implements IRuntime {
     private esmLoader: ISystemPlugin;
     private localLoader: ISystemPlugin;
     private localRoot: string;
+    private queue: Promise<any>;
     private runtimeHost: IRuntimeHost;
     private system: SystemJSLoader.System;
     private transpiler: ISystemPlugin;
@@ -79,6 +80,7 @@ export class Runtime implements IRuntime {
             /^([a-zA-Z]+:\/\/)([^/]*)\/.*$/,
             '$1$2'
         );
+        this.queue = Promise.resolve();
         this.runtimeHost = runtimeHost;
         this.system = system;
         this.transpiler =
@@ -90,8 +92,7 @@ export class Runtime implements IRuntime {
                       runtimeHost,
                       typescriptVersion: TYPESCRIPT_VERSION,
                   });
-        this.useEsm =
-            !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport();
+        this.useEsm = !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport;
         this.system.registry.set(
             '@runtime-loader-esm',
             system.newModule(this.esmLoader)
@@ -126,13 +127,93 @@ export class Runtime implements IRuntime {
     }
 
     public import(entrypointPath: string): Promise<IModuleExports> {
-        return this.buildConfig()
-            .then(config => {
-                this.system.config(config);
+        this.queue = this.queue.then(() =>
+            this.buildConfig()
+                .then(config => {
+                    this.system.config(config);
 
-                return this.system.import(entrypointPath);
-            })
-            .then(addSyntheticDefaultExports);
+                    return this.system.import(entrypointPath);
+                })
+                .then(addSyntheticDefaultExports)
+        );
+
+        return this.queue;
+    }
+
+    public invalidate(...pathnames: string[]): Promise<void> {
+        type DependentName = string;
+
+        const dependentGraph: Map<
+            DependentName,
+            Set<DependentName>
+        > = new Map();
+        const getDependents = (
+            normalizedPath: DependentName
+        ): DependentName[] => {
+            if (dependentGraph.size !== Object.keys(this.system.loads).length) {
+                dependentGraph.clear();
+
+                for (const key in this.system.loads) {
+                    const loadEntry = this.system.loads[key];
+
+                    for (const mapping in loadEntry.depMap) {
+                        const dependency = loadEntry.depMap[mapping];
+
+                        if (!dependentGraph.has(dependency)) {
+                            dependentGraph.set(dependency, new Set());
+                        }
+
+                        dependentGraph.get(dependency).add(key);
+                    }
+                }
+            }
+
+            return dependentGraph.has(normalizedPath)
+                ? Array.from(dependentGraph.get(normalizedPath))
+                : [];
+        };
+        const normalizedPaths = new Map();
+        const normalizePath = (key: string): Promise<string> => {
+            if (normalizedPaths.has(key)) {
+                return Promise.resolve(normalizedPaths.get(key));
+            }
+
+            return this.system.resolve(key).then(resolvedPath => {
+                normalizedPaths.set(key, resolvedPath);
+
+                return resolvedPath;
+            });
+        };
+        const seen = new Set();
+
+        this.queue = this.queue.then(() => {
+            const invalidations = pathnames.slice();
+            const handleNextInvalidation = (): Promise<any> => {
+                if (!invalidations.length) return Promise.resolve();
+
+                const pathname = invalidations.shift();
+
+                return normalizePath(pathname).then(resolvedPathname => {
+                    if (!seen.has(resolvedPathname)) {
+                        seen.add(resolvedPathname);
+
+                        this.system.registry.delete(resolvedPathname);
+
+                        const dependents = getDependents(resolvedPathname);
+
+                        for (const dependent of dependents) {
+                            invalidations.push(dependent);
+                        }
+                    }
+
+                    return handleNextInvalidation();
+                });
+            };
+
+            return handleNextInvalidation();
+        });
+
+        return this.queue;
     }
 
     private buildConfig(): Promise<SystemJSLoader.Config> {
