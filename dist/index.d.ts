@@ -1,4 +1,9 @@
 /// <reference types="systemjs" />
+declare global  {
+    interface Window {
+        PLNKR_RUNTIME_USE_SYSTEM: boolean;
+    }
+}
 export declare type IModuleExports = any;
 export interface IRuntimeHost {
     getFileContents(pathname: string): string | Promise<string>;
@@ -26,12 +31,13 @@ export interface IRuntime {
     import(entrypointPath: string): Promise<IModuleExports>;
 }
 export declare class Runtime implements IRuntime {
-    private cdnLoader;
+    private esmLoader;
     private localLoader;
     private localRoot;
     private runtimeHost;
     private system;
     private transpiler;
+    private useEsm;
     constructor({runtimeHost, system, transpiler}: IRuntimeOptions);
     import(entrypointPath: string): Promise<IModuleExports>;
     private buildConfig();
