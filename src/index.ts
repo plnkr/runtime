@@ -1,9 +1,20 @@
+import convertRange from 'sver/convert-range';
 import SystemJS from 'systemjs';
-import { CDN_PREFIX, createCdnLoader } from './cdnLoader';
+
+import { createEsmCdnLoader, addSyntheticDefaultExports } from './esmLoader';
+import { supportsDynamicImport } from './featureDetection';
 import { createLocalLoader } from './localLoader';
 import { createTranspiler } from './transpiler';
 
+const ESM_CDN_URL = 'https://dev.jspm.io';
+const SYSTEM_CDN_URL = 'https://system-dev.jspm.io';
 const TYPESCRIPT_VERSION = '2.8';
+
+declare global {
+    interface Window {
+        PLNKR_RUNTIME_USE_SYSTEM: boolean;
+    }
+}
 
 export type IModuleExports = any;
 
@@ -47,12 +58,13 @@ export interface IRuntime {
 
 export class Runtime implements IRuntime {
     // private defaultExtensions: string[];
-    private cdnLoader: ISystemPlugin;
+    private esmLoader: ISystemPlugin;
     private localLoader: ISystemPlugin;
     private localRoot: string;
     private runtimeHost: IRuntimeHost;
     private system: SystemJSLoader.System;
     private transpiler: ISystemPlugin;
+    private useEsm: boolean;
 
     constructor({
         // defaultExtensions = ['.js', '.ts', '.jsx', '.tsx'],
@@ -61,7 +73,7 @@ export class Runtime implements IRuntime {
         transpiler,
     }: IRuntimeOptions) {
         // // this.defaultExtensions = defaultExtensions;
-        this.cdnLoader = createCdnLoader();
+        this.esmLoader = createEsmCdnLoader();
         this.localLoader = createLocalLoader({ runtimeHost });
         this.localRoot = system.baseURL.replace(
             /^([a-zA-Z]+:\/\/)([^/]*)\/.*$/,
@@ -75,12 +87,14 @@ export class Runtime implements IRuntime {
                 : transpiler ||
                   createTranspiler({
                       createRuntime,
+                      runtimeHost,
                       typescriptVersion: TYPESCRIPT_VERSION,
                   });
-
+        this.useEsm =
+            !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport();
         this.system.registry.set(
-            '@runtime-loader-cdn',
-            system.newModule(this.cdnLoader)
+            '@runtime-loader-esm',
+            system.newModule(this.esmLoader)
         );
         this.system.registry.set(
             '@runtime-loader-local',
@@ -92,29 +106,33 @@ export class Runtime implements IRuntime {
                 system.newModule(this.transpiler)
             );
         }
+
         this.system.config({
             meta: {
-                [`${CDN_PREFIX}*`]: {
-                    loader: '@runtime-loader-cdn',
-                    // @ts-ignore
-                    esModule: true,
-                },
                 [`${this.localRoot}/*`]: {
+                    // @ts-ignore
                     esModule: true,
                     loader: '@runtime-loader-local',
                 },
+                [`${ESM_CDN_URL}/*`]: {
+                    // @ts-ignore
+                    esModule: true,
+                    loader: '@runtime-loader-esm',
+                },
             },
-            transpiler: this.transpiler ? '@runtime-transpiler' : null,
+            transpiler: this.transpiler ? '@runtime-transpiler' : false,
         });
         this.system.trace = true;
     }
 
     public import(entrypointPath: string): Promise<IModuleExports> {
-        return this.buildConfig().then(config => {
-            this.system.config(config);
+        return this.buildConfig()
+            .then(config => {
+                this.system.config(config);
 
-            return this.system.import(entrypointPath);
-        });
+                return this.system.import(entrypointPath);
+            })
+            .then(addSyntheticDefaultExports);
     }
 
     private buildConfig(): Promise<SystemJSLoader.Config> {
@@ -131,16 +149,18 @@ export class Runtime implements IRuntime {
                 try {
                     const pkgJson = JSON.parse(pkgJsonStr);
 
+                    Object.assign(dependencies, pkgJson.devDependencies || {});
                     Object.assign(dependencies, pkgJson.dependencies || {});
                 } catch (e) {
                     // Do nothing
                 }
             }
 
-            // tslint:disable-next-line forin
+            const baseUrl = this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;
+
             for (const name in dependencies) {
                 const range = dependencies[name];
-                const pkgId = `${CDN_PREFIX}${name}@${range}`;
+                const pkgId = `${baseUrl}/${name}${createJspmRange(range)}`;
 
                 config.map[name] = pkgId;
             }
@@ -148,6 +168,17 @@ export class Runtime implements IRuntime {
             return config;
         });
     }
+}
+
+function createJspmRange(semverRange: string): string {
+    const range = convertRange(semverRange);
+    let versionString = '';
+    if (range.isExact) versionString = '@' + range.version.toString();
+    else if (range.isStable)
+        versionString = '@' + range.version.major + '.' + range.version.minor;
+    else if (range.isMajor) versionString = '@' + range.version.major;
+
+    return versionString;
 }
 
 function createRuntime(options: IRuntimeOptions): IRuntime {

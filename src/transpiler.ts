@@ -1,9 +1,10 @@
 import { ModuleKind, transpileModule } from 'typescript';
 
-import { IRuntimeOptions, ISystemPlugin, IRuntime } from './';
+import { IRuntimeHost, IRuntimeOptions, ISystemPlugin, IRuntime } from './';
 
 export interface ITranspilerOptions {
     createRuntime: (options: IRuntimeOptions) => IRuntime;
+    runtimeHost: IRuntimeHost;
     typescriptVersion: string;
 }
 
@@ -14,40 +15,66 @@ interface ITypescriptTranspiler {
 
 export function createTranspiler({
     createRuntime,
+    runtimeHost,
     typescriptVersion,
 }: ITranspilerOptions): ISystemPlugin {
     const transpilerRuntime = createRuntime({
         runtimeHost: {
-            async getFileContents(pathname) {
+            getFileContents(pathname) {
+                const result = Promise.resolve(
+                    runtimeHost.getFileContents(pathname)
+                );
+
                 if (pathname === 'package.json') {
-                    return JSON.stringify({
-                        dependencies: {
-                            typescript: typescriptVersion,
-                        },
-                    });
+                    return result
+                        .then(packageJson => {
+                            const json = JSON.parse(packageJson);
+
+                            if (!json['devDependencies']) {
+                                json['devDependencies'] = {};
+                            }
+
+                            if (!json['devDependencies']['typescript']) {
+                                json['devDependencies'][
+                                    'typescript'
+                                ] = typescriptVersion;
+                            }
+
+                            return JSON.stringify(json);
+                        })
+                        .catch(() =>
+                            JSON.stringify({
+                                dependencies: {
+                                    typescript: typescriptVersion,
+                                },
+                            })
+                        );
                 }
+
+                return result;
             },
         },
         transpiler: false,
     });
-    let typescriptPromise: Promise<{ default: ITypescriptTranspiler }>;
+    let typescriptPromise: Promise<ITypescriptTranspiler>;
 
     return {
-        async translate(load) {
+        translate(load) {
             if (!typescriptPromise) {
                 typescriptPromise = transpilerRuntime.import('typescript');
             }
 
-            const typescript = (await typescriptPromise).default;
-            const transpiled = typescript.transpileModule(load.source, {
-                compilerOptions: {
-                    allowSyntheticDefaultImports: true,
-                    esModuleInterop: true,
-                    module: typescript.ModuleKind.System,
-                },
-            });
+            return typescriptPromise.then(typescript => {
+                const transpiled = typescript.transpileModule(load.source, {
+                    compilerOptions: {
+                        allowSyntheticDefaultImports: true,
+                        esModuleInterop: true,
+                        module: typescript.ModuleKind.System,
+                    },
+                });
 
-            return transpiled.outputText;
+                return transpiled.outputText;
+            });
         },
     };
 }
