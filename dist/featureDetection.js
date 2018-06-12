@@ -1,4 +1,4 @@
-let cachedSupportsDynamicImport;
+var cachedSupportsDynamicImport;
 export function supportsDynamicImport() {
     if (typeof cachedSupportsDynamicImport !== 'boolean') {
         try {

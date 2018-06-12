@@ -5941,17 +5941,6 @@ var system_src = createCommonjsModule(function (module) {
 
 var SystemJS = unwrapExports(system_src);
 
-// import { supportsDynamicImport } from './featureDetection';
-function createEsmCdnLoader() {
-    return {
-        fetch() {
-            return '';
-        },
-        instantiate(load) {
-            return import(load.address).then(esModule => addSyntheticDefaultExports(esModule));
-        },
-    };
-}
 function addSyntheticDefaultExports(esModule) {
     let module = esModule;
     // only default export -> copy named exports down
@@ -5976,20 +5965,18 @@ function addSyntheticDefaultExports(esModule) {
     return module;
 }
 
-let cachedSupportsDynamicImport;
-function supportsDynamicImport() {
-    if (typeof cachedSupportsDynamicImport !== 'boolean') {
-        try {
-            // tslint:disable-next-line no-unused-expression
-            new Function('import("")');
-            cachedSupportsDynamicImport = true;
-        }
-        catch (err) {
-            cachedSupportsDynamicImport = false;
-        }
-    }
-    return cachedSupportsDynamicImport;
+// import { supportsDynamicImport } from './featureDetection';
+function createEsmCdnLoader() {
+    return {
+        fetch() {
+            return '';
+        },
+        instantiate(load) {
+            return import(load.address).then(esModule => addSyntheticDefaultExports(esModule));
+        },
+    };
 }
+const supportsDynamicImport = true;
 
 function createLocalLoader({ runtimeHost, }) {
     return {
@@ -6062,6 +6049,7 @@ class Runtime {
         this.esmLoader = createEsmCdnLoader();
         this.localLoader = createLocalLoader({ runtimeHost });
         this.localRoot = system.baseURL.replace(/^([a-zA-Z]+:\/\/)([^/]*)\/.*$/, '$1$2');
+        this.queue = Promise.resolve();
         this.runtimeHost = runtimeHost;
         this.system = system;
         this.transpiler =
@@ -6073,8 +6061,7 @@ class Runtime {
                         runtimeHost,
                         typescriptVersion: TYPESCRIPT_VERSION,
                     });
-        this.useEsm =
-            !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport();
+        this.useEsm = !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport;
         this.system.registry.set('@runtime-loader-esm', system.newModule(this.esmLoader));
         this.system.registry.set('@runtime-loader-local', system.newModule(this.localLoader));
         if (this.transpiler) {
@@ -6098,12 +6085,66 @@ class Runtime {
         this.system.trace = true;
     }
     import(entrypointPath) {
-        return this.buildConfig()
+        this.queue = this.queue.then(() => this.buildConfig()
             .then(config => {
             this.system.config(config);
             return this.system.import(entrypointPath);
         })
-            .then(addSyntheticDefaultExports);
+            .then(addSyntheticDefaultExports));
+        return this.queue;
+    }
+    invalidate(...pathnames) {
+        const dependentGraph = new Map();
+        const getDependents = (normalizedPath) => {
+            if (dependentGraph.size !== Object.keys(this.system.loads).length) {
+                dependentGraph.clear();
+                for (const key in this.system.loads) {
+                    const loadEntry = this.system.loads[key];
+                    for (const mapping in loadEntry.depMap) {
+                        const dependency = loadEntry.depMap[mapping];
+                        if (!dependentGraph.has(dependency)) {
+                            dependentGraph.set(dependency, new Set());
+                        }
+                        dependentGraph.get(dependency).add(key);
+                    }
+                }
+            }
+            return dependentGraph.has(normalizedPath)
+                ? Array.from(dependentGraph.get(normalizedPath))
+                : [];
+        };
+        const normalizedPaths = new Map();
+        const normalizePath = (key) => {
+            if (normalizedPaths.has(key)) {
+                return Promise.resolve(normalizedPaths.get(key));
+            }
+            return this.system.resolve(key).then(resolvedPath => {
+                normalizedPaths.set(key, resolvedPath);
+                return resolvedPath;
+            });
+        };
+        const seen = new Set();
+        this.queue = this.queue.then(() => {
+            const invalidations = pathnames.slice();
+            const handleNextInvalidation = () => {
+                if (!invalidations.length)
+                    return Promise.resolve();
+                const pathname = invalidations.shift();
+                return normalizePath(pathname).then(resolvedPathname => {
+                    if (!seen.has(resolvedPathname)) {
+                        seen.add(resolvedPathname);
+                        this.system.registry.delete(resolvedPathname);
+                        const dependents = getDependents(resolvedPathname);
+                        for (const dependent of dependents) {
+                            invalidations.push(dependent);
+                        }
+                    }
+                    return handleNextInvalidation();
+                });
+            };
+            return handleNextInvalidation();
+        });
+        return this.queue;
     }
     buildConfig() {
         const config = this.system.getConfig();

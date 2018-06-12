@@ -34,11 +34,13 @@ export declare class Runtime implements IRuntime {
     private esmLoader;
     private localLoader;
     private localRoot;
+    private queue;
     private runtimeHost;
     private system;
     private transpiler;
     private useEsm;
     constructor({runtimeHost, system, transpiler}: IRuntimeOptions);
     import(entrypointPath: string): Promise<IModuleExports>;
+    invalidate(...pathnames: string[]): Promise<void>;
     private buildConfig();
 }
