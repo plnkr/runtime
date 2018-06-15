@@ -7,7 +7,6 @@ const Typescript = require('typescript');
 const commonjsPlugin = require('rollup-plugin-commonjs');
 const nodeResolvePlugin = require('rollup-plugin-node-resolve');
 const typescriptPlugin = require('rollup-plugin-typescript');
-const aliasPlugin = require('rollup-plugin-alias');
 
 const Package = require('./package.json');
 
@@ -22,10 +21,6 @@ module.exports = [
             sourcemap: true,
         },
         plugins: [
-            aliasPlugin({
-                resolve: ['.ts'],
-                './esmLoader': './esmLoaderShim',
-            }),
             nodeResolvePlugin({
                 jsnext: false,
                 module: true,

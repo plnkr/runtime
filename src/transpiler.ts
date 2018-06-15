@@ -1,4 +1,4 @@
-import { ModuleKind, transpileModule } from 'typescript';
+import { JsxEmit, ModuleKind, transpileModule } from 'typescript';
 
 import { IRuntimeHost, IRuntimeOptions, ISystemPlugin, IRuntime } from './';
 
@@ -9,6 +9,7 @@ export interface ITranspilerOptions {
 }
 
 interface ITypescriptTranspiler {
+    JsxEmit: typeof JsxEmit;
     transpileModule: typeof transpileModule;
     ModuleKind: typeof ModuleKind;
 }
@@ -64,17 +65,25 @@ export function createTranspiler({
                 typescriptPromise = transpilerRuntime.import('typescript');
             }
 
-            return typescriptPromise.then(typescript => {
-                const transpiled = typescript.transpileModule(load.source, {
-                    compilerOptions: {
-                        allowSyntheticDefaultImports: true,
-                        esModuleInterop: true,
-                        module: typescript.ModuleKind.System,
-                    },
-                });
+            const tsconfigPromise = transpilerRuntime
+                .import('tsconfig.json')
+                .catch(() => null)
+                .then(tsconfig => tsconfig || {});
 
-                return transpiled.outputText;
-            });
+            return Promise.all([typescriptPromise, tsconfigPromise]).then(
+                ([typescript, tsconfig]) => {
+                    const transpiled = typescript.transpileModule(load.source, {
+                        compilerOptions: {
+                            ...(tsconfig.compilerOptions || {}),
+                            allowSyntheticDefaultImports: true,
+                            esModuleInterop: true,
+                            module: typescript.ModuleKind.System,
+                        },
+                    });
+
+                    return transpiled.outputText;
+                }
+            );
         },
     };
 }

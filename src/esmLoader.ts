@@ -10,11 +10,19 @@ export function createEsmCdnLoader(): ISystemPlugin {
         },
 
         instantiate(load: ISystemModule) {
-            return import(load.address).then(esModule =>
+            return dynamicImport(load.address).then(esModule =>
                 addSyntheticDefaultExports(esModule)
             );
         },
     };
 }
 
-export const supportsDynamicImport = true;
+export type DynamicImport = (spec: string) => Promise<any>;
+
+export const dynamicImport = <DynamicImport>(() => {
+    try {
+        return new Function('spec', 'return import(spec)');
+    } catch (__) {
+        return null;
+    }
+})();

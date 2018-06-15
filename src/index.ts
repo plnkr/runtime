@@ -1,7 +1,7 @@
 import convertRange from 'sver/convert-range';
 import SystemJS from 'systemjs';
 
-import { createEsmCdnLoader, supportsDynamicImport } from './esmLoader';
+import { createEsmCdnLoader, dynamicImport } from './esmLoader';
 import { createLocalLoader } from './localLoader';
 import { addSyntheticDefaultExports } from './syntheticImports';
 import { createTranspiler } from './transpiler';
@@ -92,7 +92,9 @@ export class Runtime implements IRuntime {
                       runtimeHost,
                       typescriptVersion: TYPESCRIPT_VERSION,
                   });
-        this.useEsm = !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport;
+        this.useEsm =
+            !window.PLNKR_RUNTIME_USE_SYSTEM &&
+            typeof dynamicImport === 'function';
         this.system.registry.set(
             '@runtime-loader-esm',
             system.newModule(this.esmLoader)
