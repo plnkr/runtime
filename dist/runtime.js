@@ -19,6 +19,14 @@
     and limitations under the License.
     ***************************************************************************** */
 
+    var __assign = Object.assign || function __assign(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
+        }
+        return t;
+    };
+
     function __values(o) {
         var m = typeof Symbol === "function" && o[Symbol.iterator], i = 0;
         if (m) return m.call(o);
@@ -28,6 +36,23 @@
                 return { value: o && o[i++], done: !o };
             }
         };
+    }
+
+    function __read(o, n) {
+        var m = typeof Symbol === "function" && o[Symbol.iterator];
+        if (!m) return o;
+        var i = m.call(o), r, ar = [], e;
+        try {
+            while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+        }
+        catch (error) { e = { error: error }; }
+        finally {
+            try {
+                if (r && !r.done && (m = i["return"])) m.call(i);
+            }
+            finally { if (e) throw e.error; }
+        }
+        return ar;
     }
 
     function unwrapExports (x) {
@@ -5973,24 +5998,6 @@
 
     var SystemJS = unwrapExports(system_src);
 
-    function createEsmCdnLoader() {
-        return {};
-    }
-    var supportsDynamicImport = false;
-
-    function createLocalLoader(_a) {
-        var runtimeHost = _a.runtimeHost;
-        return {
-            fetch: function (load, systemFetch) {
-                if (load.address.indexOf(this.baseURL) !== 0) {
-                    return systemFetch(load);
-                }
-                var localPath = load.address.slice(this.baseURL.length);
-                return Promise.resolve(runtimeHost.getFileContents(localPath)).catch(function () { return systemFetch(load); });
-            },
-        };
-    }
-
     function addSyntheticDefaultExports(esModule) {
         var module = esModule;
         // only default export -> copy named exports down
@@ -6024,6 +6031,41 @@
         }
         return module;
         var e_1, _c;
+    }
+
+    // import { supportsDynamicImport } from './featureDetection';
+    function createEsmCdnLoader() {
+        return {
+            fetch: function () {
+                return '';
+            },
+            instantiate: function (load) {
+                return dynamicImport(load.address).then(function (esModule) {
+                    return addSyntheticDefaultExports(esModule);
+                });
+            },
+        };
+    }
+    var dynamicImport = (function () {
+        try {
+            return new Function('spec', 'return import(spec)');
+        }
+        catch (__) {
+            return null;
+        }
+    })();
+
+    function createLocalLoader(_a) {
+        var runtimeHost = _a.runtimeHost;
+        return {
+            fetch: function (load, systemFetch) {
+                if (load.address.indexOf(this.baseURL) !== 0) {
+                    return systemFetch(load);
+                }
+                var localPath = load.address.slice(this.baseURL.length);
+                return Promise.resolve(runtimeHost.getFileContents(localPath)).catch(function () { return systemFetch(load); });
+            },
+        };
     }
 
     function createTranspiler(_a) {
@@ -6063,13 +6105,14 @@
                 if (!typescriptPromise) {
                     typescriptPromise = transpilerRuntime.import('typescript');
                 }
-                return typescriptPromise.then(function (typescript) {
+                var tsconfigPromise = transpilerRuntime
+                    .import('tsconfig.json')
+                    .catch(function () { return null; })
+                    .then(function (tsconfig) { return tsconfig || {}; });
+                return Promise.all([typescriptPromise, tsconfigPromise]).then(function (_a) {
+                    var _b = __read(_a, 2), typescript = _b[0], tsconfig = _b[1];
                     var transpiled = typescript.transpileModule(load.source, {
-                        compilerOptions: {
-                            allowSyntheticDefaultImports: true,
-                            esModuleInterop: true,
-                            module: typescript.ModuleKind.System,
-                        },
+                        compilerOptions: __assign({}, (tsconfig.compilerOptions || {}), { allowSyntheticDefaultImports: true, esModuleInterop: true, module: typescript.ModuleKind.System }),
                     });
                     return transpiled.outputText;
                 });
@@ -6101,7 +6144,9 @@
                             runtimeHost: runtimeHost,
                             typescriptVersion: TYPESCRIPT_VERSION,
                         });
-            this.useEsm = !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport;
+            this.useEsm =
+                !window.PLNKR_RUNTIME_USE_SYSTEM &&
+                    typeof dynamicImport === 'function';
             this.system.registry.set('@runtime-loader-esm', system.newModule(this.esmLoader));
             this.system.registry.set('@runtime-loader-local', system.newModule(this.localLoader));
             if (this.transpiler) {

@@ -5972,11 +5972,18 @@ function createEsmCdnLoader() {
             return '';
         },
         instantiate(load) {
-            return import(load.address).then(esModule => addSyntheticDefaultExports(esModule));
+            return dynamicImport(load.address).then(esModule => addSyntheticDefaultExports(esModule));
         },
     };
 }
-const supportsDynamicImport = true;
+const dynamicImport = (() => {
+    try {
+        return new Function('spec', 'return import(spec)');
+    }
+    catch (__) {
+        return null;
+    }
+})();
 
 function createLocalLoader({ runtimeHost, }) {
     return {
@@ -6024,13 +6031,13 @@ function createTranspiler({ createRuntime, runtimeHost, typescriptVersion, }) {
             if (!typescriptPromise) {
                 typescriptPromise = transpilerRuntime.import('typescript');
             }
-            return typescriptPromise.then(typescript => {
+            const tsconfigPromise = transpilerRuntime
+                .import('tsconfig.json')
+                .catch(() => null)
+                .then(tsconfig => tsconfig || {});
+            return Promise.all([typescriptPromise, tsconfigPromise]).then(([typescript, tsconfig]) => {
                 const transpiled = typescript.transpileModule(load.source, {
-                    compilerOptions: {
-                        allowSyntheticDefaultImports: true,
-                        esModuleInterop: true,
-                        module: typescript.ModuleKind.System,
-                    },
+                    compilerOptions: Object.assign({}, (tsconfig.compilerOptions || {}), { allowSyntheticDefaultImports: true, esModuleInterop: true, module: typescript.ModuleKind.System }),
                 });
                 return transpiled.outputText;
             });
@@ -6061,7 +6068,9 @@ class Runtime {
                         runtimeHost,
                         typescriptVersion: TYPESCRIPT_VERSION,
                     });
-        this.useEsm = !window.PLNKR_RUNTIME_USE_SYSTEM && supportsDynamicImport;
+        this.useEsm =
+            !window.PLNKR_RUNTIME_USE_SYSTEM &&
+                typeof dynamicImport === 'function';
         this.system.registry.set('@runtime-loader-esm', system.newModule(this.esmLoader));
         this.system.registry.set('@runtime-loader-local', system.newModule(this.localLoader));
         if (this.transpiler) {

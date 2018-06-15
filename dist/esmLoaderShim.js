@@ -1,5 +1,0 @@
-export function createEsmCdnLoader() {
-    return {};
-}
-export var supportsDynamicImport = false;
-//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZXNtTG9hZGVyU2hpbS5qcyIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzIjpbIi4uL3NyYy9lc21Mb2FkZXJTaGltLnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUVBLE1BQU07SUFDRixPQUFPLEVBQUUsQ0FBQztBQUNkLENBQUM7QUFFRCxNQUFNLENBQUMsSUFBTSxxQkFBcUIsR0FBRyxLQUFLLENBQUMifQ==
