@@ -5999,38 +5999,34 @@
     var SystemJS = unwrapExports(system_src);
 
     function addSyntheticDefaultExports(esModule) {
-        var module = esModule;
+        var module;
         // only default export -> copy named exports down
-        if ('default' in module && Object.keys(module).length === 1) {
+        if ('default' in esModule && Object.keys(esModule).length === 1) {
             module = Object.create(null);
             // etc should aim to replicate Module object properties
             Object.defineProperty(module, Symbol.toStringTag, {
                 value: 'module',
             });
             module.default = esModule.default;
-            try {
-                for (var _a = __values(Object.keys(esModule.default)), _b = _a.next(); !_b.done; _b = _a.next()) {
-                    var namedExport = _b.value;
-                    if (namedExport === 'default') {
-                        continue;
-                    }
-                    var value = esModule.default[namedExport];
-                    module[namedExport] =
-                        typeof value === 'function'
-                            ? value.bind(esModule.default)
-                            : value;
+            var propertyDescriptors = Object.getOwnPropertyDescriptors(esModule.default);
+            for (var namedExport in propertyDescriptors) {
+                if (namedExport === 'default') {
+                    continue;
                 }
-            }
-            catch (e_1_1) { e_1 = { error: e_1_1 }; }
-            finally {
-                try {
-                    if (_b && !_b.done && (_c = _a.return)) _c.call(_a);
-                }
-                finally { if (e_1) throw e_1.error; }
+                Object.defineProperty(module, namedExport, propertyDescriptors[namedExport]);
+                // const value = esModule.default[namedExport];
+                // module[namedExport] = value;
+                // typeof value === 'function' &&
+                // value.prototype === Function.prototype
+                //     ? value.bind(esModule.default)
+                //     : value;
             }
         }
-        return module;
-        var e_1, _c;
+        if (!('default' in esModule)) {
+            module = Object.assign(Object.create(null), esModule);
+            module.default = esModule;
+        }
+        return module || esModule;
     }
 
     // import { supportsDynamicImport } from './featureDetection';
@@ -6055,64 +6051,118 @@
         }
     })();
 
+    // Copyright Joyent, Inc. and other Node contributors.
+
+    // Split a filename into [root, dir, basename, ext], unix version
+    // 'root' is just a slash, or nothing.
+    var splitPathRe =
+        /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;
+    var splitPath = function(filename) {
+      return splitPathRe.exec(filename).slice(1);
+    };
+
+
+    function extname(path) {
+      return splitPath(path)[3];
+    }
+
+    function tryCandidates(candidates, loader) {
+        var tryNext = function (idx, errors) {
+            if (idx >= candidates.length) {
+                var error = new Error('Loading failed');
+                error.loadErrors = errors;
+                return Promise.reject(error);
+            }
+            return Promise.resolve(loader(candidates[idx])).then(function (content) {
+                return { content: content, pathname: candidates[idx] };
+            }, function (error) {
+                errors[candidates[idx]] = error;
+                return tryNext(idx + 1, errors);
+            });
+        };
+        return tryNext(0, {});
+    }
     function createLocalLoader(_a) {
-        var runtimeHost = _a.runtimeHost;
+        var defaultExtensions = _a.defaultExtensions, runtimeHost = _a.runtimeHost;
         return {
-            fetch: function (load, systemFetch) {
+            locate: function (load) {
                 if (load.address.indexOf(this.baseURL) !== 0) {
-                    return systemFetch(load);
+                    if (!runtimeHost.fallbackToSystemFetch) {
+                        return Promise.reject(new Error("Invariant broken: attempting to load " + load.address + " using the local loader"));
+                    }
                 }
+                var initialAddress = load.address;
                 var localPath = load.address.slice(this.baseURL.length);
-                return Promise.resolve(runtimeHost.getFileContents(localPath)).catch(function () { return systemFetch(load); });
+                var ext = extname(localPath);
+                var candidates = ext
+                    ? [localPath]
+                    : defaultExtensions.map(function (ext) { return "" + localPath + ext; });
+                var loadFromHost = function (pathname) {
+                    return Promise.resolve(runtimeHost.getFileContents(pathname)).then(function (contents) {
+                        if (typeof contents !== 'string') {
+                            return (Promise.reject(new Error('Not found')));
+                        }
+                        return contents;
+                    });
+                };
+                return tryCandidates(candidates, loadFromHost).then(function (_a) {
+                    var content = _a.content, pathname = _a.pathname;
+                    load.source = content;
+                    return initialAddress.replace(localPath, pathname);
+                });
+            },
+            fetch: function (load, systemFetch) {
+                if (typeof load.source === 'string') {
+                    return load.source;
+                }
+                if (!runtimeHost.fallbackToSystemFetch) {
+                    return Promise.reject(new Error("Unable to load " + load.address + " using the local loader"));
+                }
+                var initialAddress = load.address;
+                var localPath = load.address.slice(this.baseURL.length);
+                var ext = extname(localPath);
+                var candidates = ext
+                    ? [localPath]
+                    : defaultExtensions.map(function (ext) { return "" + localPath + ext; });
+                var loadWithSystem = function (pathname) {
+                    load.address = initialAddress.replace(localPath, pathname);
+                    return systemFetch(load);
+                };
+                return tryCandidates(candidates, loadWithSystem).then(function (_a) {
+                    var content = _a.content, pathname = _a.pathname;
+                    load.address = initialAddress.replace(localPath, pathname);
+                    return content;
+                });
+            },
+            instantiate: function (load, systemInstantiate) {
+                if (load.address.match(/\.json$/i)) {
+                    return JSON.parse(load.source);
+                }
+                return systemInstantiate(load);
             },
         };
     }
 
     function createTranspiler(_a) {
-        var createRuntime = _a.createRuntime, runtimeHost = _a.runtimeHost, typescriptVersion = _a.typescriptVersion;
-        var transpilerRuntime = createRuntime({
-            runtimeHost: {
-                getFileContents: function (pathname) {
-                    var result = Promise.resolve(runtimeHost.getFileContents(pathname));
-                    if (pathname === 'package.json') {
-                        return result
-                            .then(function (packageJson) {
-                            var json = JSON.parse(packageJson);
-                            if (!json['devDependencies']) {
-                                json['devDependencies'] = {};
-                            }
-                            if (!json['devDependencies']['typescript']) {
-                                json['devDependencies']['typescript'] = typescriptVersion;
-                            }
-                            return JSON.stringify(json);
-                        })
-                            .catch(function () {
-                            return JSON.stringify({
-                                dependencies: {
-                                    typescript: typescriptVersion,
-                                },
-                            });
-                        });
-                    }
-                    return result;
-                },
-            },
-            transpiler: false,
-        });
-        var typescriptPromise;
+        // const transpilerRuntime = createRuntime({
+        //     defaultDependencies: {
+        //         typescript: typescriptVersion,
+        //     },
+        //     runtimeHost,
+        //     transpiler: false,
+        // });
+        var runtime = _a.runtime;
         return {
             translate: function (load) {
-                if (!typescriptPromise) {
-                    typescriptPromise = transpilerRuntime.import('typescript');
-                }
-                var tsconfigPromise = transpilerRuntime
+                var typescriptPromise = runtime.import('typescript');
+                var tsconfigPromise = runtime
                     .import('tsconfig.json')
                     .catch(function () { return null; })
                     .then(function (tsconfig) { return tsconfig || {}; });
                 return Promise.all([typescriptPromise, tsconfigPromise]).then(function (_a) {
                     var _b = __read(_a, 2), typescript = _b[0], tsconfig = _b[1];
                     var transpiled = typescript.transpileModule(load.source, {
-                        compilerOptions: __assign({}, (tsconfig.compilerOptions || {}), { allowSyntheticDefaultImports: true, esModuleInterop: true, module: typescript.ModuleKind.System }),
+                        compilerOptions: __assign({ jsx: typescript.JsxEmit.React }, (tsconfig.compilerOptions || {}), { allowSyntheticDefaultImports: true, esModuleInterop: true, module: typescript.ModuleKind.System }),
                     });
                     return transpiled.outputText;
                 });
@@ -6125,54 +6175,95 @@
     var TYPESCRIPT_VERSION = '2.8';
     var Runtime = /** @class */ (function () {
         function Runtime(_a) {
-            var 
-            // defaultExtensions = ['.js', '.ts', '.jsx', '.tsx'],
-            runtimeHost = _a.runtimeHost, _b = _a.system, system = _b === void 0 ? new SystemJS.constructor() : _b, transpiler = _a.transpiler;
-            // // this.defaultExtensions = defaultExtensions;
+            var _b = _a.defaultDependencies, defaultDependencies = _b === void 0 ? {} : _b, _c = _a.defaultExtensions, defaultExtensions = _c === void 0 ? ['.js', '.ts', '.jsx', '.tsx'] : _c, runtimeHost = _a.runtimeHost, transpiler = _a.transpiler;
+            this.defaultDependencies = defaultDependencies;
+            // this.defaultExtensions = defaultExtensions;
             this.esmLoader = createEsmCdnLoader();
-            this.localLoader = createLocalLoader({ runtimeHost: runtimeHost });
-            this.localRoot = system.baseURL.replace(/^([a-zA-Z]+:\/\/)([^/]*)\/.*$/, '$1$2');
+            this.localLoader = createLocalLoader({
+                defaultExtensions: defaultExtensions,
+                runtimeHost: runtimeHost,
+            });
             this.queue = Promise.resolve();
-            this.runtimeHost = runtimeHost;
-            this.system = system;
+            // this.runtimeHost = runtimeHost;
+            this.system = new SystemJS.constructor();
+            this.localRoot = this.system.baseURL.replace(/^([a-zA-Z]+:\/\/)([^/]*)\/.*$/, '$1$2');
             this.transpiler =
                 transpiler === false
                     ? null
                     : transpiler ||
                         createTranspiler({
                             createRuntime: createRuntime,
+                            runtime: this,
                             runtimeHost: runtimeHost,
                             typescriptVersion: TYPESCRIPT_VERSION,
                         });
             this.useEsm =
                 !window.PLNKR_RUNTIME_USE_SYSTEM &&
                     typeof dynamicImport === 'function';
-            this.system.registry.set('@runtime-loader-esm', system.newModule(this.esmLoader));
-            this.system.registry.set('@runtime-loader-local', system.newModule(this.localLoader));
+            this.system.registry.set('@runtime-loader-esm', this.system.newModule(this.esmLoader));
+            this.system.registry.set('@runtime-loader-local', this.system.newModule(this.localLoader));
             if (this.transpiler) {
-                this.system.registry.set('@runtime-transpiler', system.newModule(this.transpiler));
+                this.system.registry.set('@runtime-transpiler', this.system.newModule(this.transpiler));
             }
+            if (this.localRoot.charAt(this.localRoot.length - 1) === '/') {
+                this.localRoot = this.localRoot.slice(0, this.localRoot.length - 1);
+            }
+            if (!this.defaultDependencies['typescript']) {
+                this.defaultDependencies['typescript'] = TYPESCRIPT_VERSION;
+            }
+            var systemRegister = this.system.register;
+            this.system.register = function (key, deps, declare) {
+                if (typeof key !== 'string') {
+                    if (typeof deps === 'function')
+                        declare = deps;
+                    deps = key;
+                    key = undefined;
+                }
+                var registerDeclare = declare;
+                declare = function (_export, _context) {
+                    return registerDeclare.call(this, function (name, value) {
+                        if (typeof name === 'object') {
+                            if (typeof name['default'] === 'object') {
+                                return _export(addSyntheticDefaultExports(name['default']));
+                            }
+                        }
+                        else if (name === 'default' &&
+                            typeof value === 'object') {
+                            return _export(addSyntheticDefaultExports(value));
+                        }
+                        return _export(name, value);
+                    }, _context);
+                };
+                if (key)
+                    return systemRegister.call(this, key, deps, declare);
+                else
+                    return systemRegister.call(this, deps, declare);
+            };
             this.system.config({
-                meta: (_c = {},
-                    _c[this.localRoot + "/*"] = {
+                meta: (_d = {},
+                    _d[this.localRoot + "/*"] = {
                         // @ts-ignore
                         esModule: true,
                         loader: '@runtime-loader-local',
                     },
-                    _c[ESM_CDN_URL + "/*"] = {
+                    _d[ESM_CDN_URL + "/*"] = {
                         // @ts-ignore
                         esModule: true,
                         loader: '@runtime-loader-esm',
                     },
-                    _c),
+                    _d[SYSTEM_CDN_URL + "/*"] = {
+                        // @ts-ignore
+                        esModule: true,
+                    },
+                    _d),
                 transpiler: this.transpiler ? '@runtime-transpiler' : false,
             });
             this.system.trace = true;
-            var _c;
+            var _d;
         }
         Runtime.prototype.import = function (entrypointPath) {
             var _this = this;
-            this.queue = this.queue.then(function () {
+            var importPromise = this.queue.then(function () {
                 return _this.buildConfig()
                     .then(function (config) {
                     _this.system.config(config);
@@ -6180,7 +6271,8 @@
                 })
                     .then(addSyntheticDefaultExports);
             });
-            return this.queue;
+            // this.queue = importPromise.catch(() => undefined);
+            return importPromise;
         };
         Runtime.prototype.invalidate = function () {
             var _this = this;
@@ -6218,7 +6310,7 @@
                 });
             };
             var seen = new Set();
-            this.queue = this.queue.then(function () {
+            var invalidationPromise = this.queue.then(function () {
                 var invalidations = pathnames.slice();
                 var handleNextInvalidation = function () {
                     if (!invalidations.length)
@@ -6248,24 +6340,17 @@
                 };
                 return handleNextInvalidation();
             });
-            return this.queue;
+            this.queue = this.queue.catch(function () { return undefined; });
+            return invalidationPromise;
         };
         Runtime.prototype.buildConfig = function () {
             var _this = this;
             var config = this.system.getConfig();
+            var dependencies = this.defaultDependencies;
             config.map = {};
-            var dependencies = Object.create(null);
-            return Promise.resolve(this.runtimeHost.getFileContents('package.json')).then(function (pkgJsonStr) {
-                if (pkgJsonStr) {
-                    try {
-                        var pkgJson = JSON.parse(pkgJsonStr);
-                        Object.assign(dependencies, pkgJson.devDependencies || {});
-                        Object.assign(dependencies, pkgJson.dependencies || {});
-                    }
-                    catch (e) {
-                        // Do nothing
-                    }
-                }
+            return this.system.import('package.json').then(function (pkgJson) {
+                Object.assign(dependencies, pkgJson.devDependencies || {});
+                Object.assign(dependencies, pkgJson.dependencies || {});
                 var baseUrl = _this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;
                 for (var name in dependencies) {
                     var range = dependencies[name];
@@ -6274,6 +6359,9 @@
                 }
                 return config;
             });
+        };
+        Runtime.prototype.resolve = function (spec) {
+            return this.system.resolve(spec);
         };
         return Runtime;
     }());

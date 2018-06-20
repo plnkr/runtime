@@ -6,10 +6,15 @@ declare global  {
 }
 export declare type IModuleExports = any;
 export interface IRuntimeHost {
-    getFileContents(pathname: string): string | Promise<string>;
+    fallbackToSystemFetch?: boolean;
+    getFileContents(pathname: string): string | Promise<string> | undefined | Promise<undefined>;
     transpile?(load: ISystemModule): string | Promise<string>;
 }
 export interface IRuntimeOptions {
+    defaultDependencies?: {
+        [name: string]: string;
+    };
+    defaultExtensions?: string[];
     processModule?: string;
     runtimeHost: IRuntimeHost;
     system?: SystemJSLoader.System;
@@ -23,24 +28,25 @@ export interface ISystemModule {
 }
 export interface ISystemPlugin {
     fetch?(this: SystemJSLoader.System, load: ISystemModule, systemFetch: (load: ISystemModule) => string | Promise<string>): string | Promise<string>;
-    instantiate?(load: ISystemModule, systemInstantiate: (load: ISystemModule) => object | Promise<object>): object | Promise<object>;
-    locate?(load: ISystemModule): string | Promise<string>;
-    translate?(load: ISystemModule): string | Promise<string>;
+    instantiate?(this: SystemJSLoader.System, load: ISystemModule, systemInstantiate: (load: ISystemModule) => object | Promise<object>): object | Promise<object>;
+    locate?(this: SystemJSLoader.System, load: ISystemModule): string | Promise<string>;
+    translate?(this: SystemJSLoader.System, load: ISystemModule): string | Promise<string>;
 }
 export interface IRuntime {
     import(entrypointPath: string): Promise<IModuleExports>;
 }
 export declare class Runtime implements IRuntime {
+    private defaultDependencies;
     private esmLoader;
     private localLoader;
     private localRoot;
     private queue;
-    private runtimeHost;
     private system;
     private transpiler;
     private useEsm;
-    constructor({runtimeHost, system, transpiler}: IRuntimeOptions);
+    constructor({defaultDependencies, defaultExtensions, runtimeHost, transpiler}: IRuntimeOptions);
     import(entrypointPath: string): Promise<IModuleExports>;
     invalidate(...pathnames: string[]): Promise<void>;
-    private buildConfig();
+    buildConfig(): Promise<SystemJSLoader.Config>;
+    resolve(spec: string): Promise<string>;
 }
