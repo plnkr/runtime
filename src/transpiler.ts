@@ -4,6 +4,7 @@ import { IRuntimeHost, IRuntimeOptions, ISystemPlugin, IRuntime } from './';
 
 export interface ITranspilerOptions {
     createRuntime: (options: IRuntimeOptions) => IRuntime;
+    runtime: IRuntime;
     runtimeHost: IRuntimeHost;
     typescriptVersion: string;
 }
@@ -15,57 +16,22 @@ interface ITypescriptTranspiler {
 }
 
 export function createTranspiler({
-    createRuntime,
-    runtimeHost,
-    typescriptVersion,
+    runtime,
 }: ITranspilerOptions): ISystemPlugin {
-    const transpilerRuntime = createRuntime({
-        runtimeHost: {
-            getFileContents(pathname) {
-                const result = Promise.resolve(
-                    runtimeHost.getFileContents(pathname)
-                );
-
-                if (pathname === 'package.json') {
-                    return result
-                        .then(packageJson => {
-                            const json = JSON.parse(packageJson);
-
-                            if (!json['devDependencies']) {
-                                json['devDependencies'] = {};
-                            }
-
-                            if (!json['devDependencies']['typescript']) {
-                                json['devDependencies'][
-                                    'typescript'
-                                ] = typescriptVersion;
-                            }
-
-                            return JSON.stringify(json);
-                        })
-                        .catch(() =>
-                            JSON.stringify({
-                                dependencies: {
-                                    typescript: typescriptVersion,
-                                },
-                            })
-                        );
-                }
-
-                return result;
-            },
-        },
-        transpiler: false,
-    });
-    let typescriptPromise: Promise<ITypescriptTranspiler>;
+    // const transpilerRuntime = createRuntime({
+    //     defaultDependencies: {
+    //         typescript: typescriptVersion,
+    //     },
+    //     runtimeHost,
+    //     transpiler: false,
+    // });
 
     return {
         translate(load) {
-            if (!typescriptPromise) {
-                typescriptPromise = transpilerRuntime.import('typescript');
-            }
-
-            const tsconfigPromise = transpilerRuntime
+            const typescriptPromise: Promise<
+                ITypescriptTranspiler
+            > = runtime.import('typescript');
+            const tsconfigPromise = runtime
                 .import('tsconfig.json')
                 .catch(() => null)
                 .then(tsconfig => tsconfig || {});
@@ -74,6 +40,7 @@ export function createTranspiler({
                 ([typescript, tsconfig]) => {
                     const transpiled = typescript.transpileModule(load.source, {
                         compilerOptions: {
+                            jsx: typescript.JsxEmit.React,
                             ...(tsconfig.compilerOptions || {}),
                             allowSyntheticDefaultImports: true,
                             esModuleInterop: true,

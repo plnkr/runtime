@@ -19,12 +19,16 @@ declare global {
 export type IModuleExports = any;
 
 export interface IRuntimeHost {
-    getFileContents(pathname: string): string | Promise<string>;
+    fallbackToSystemFetch?: boolean;
+    getFileContents(
+        pathname: string
+    ): string | Promise<string> | undefined | Promise<undefined>;
     transpile?(load: ISystemModule): string | Promise<string>;
 }
 
 export interface IRuntimeOptions {
-    // defaultExtensions?: string[];
+    defaultDependencies?: { [name: string]: string };
+    defaultExtensions?: string[];
     processModule?: string;
     runtimeHost: IRuntimeHost;
     system?: SystemJSLoader.System;
@@ -45,11 +49,18 @@ export interface ISystemPlugin {
         systemFetch: (load: ISystemModule) => string | Promise<string>
     ): string | Promise<string>;
     instantiate?(
+        this: SystemJSLoader.System,
         load: ISystemModule,
         systemInstantiate: (load: ISystemModule) => object | Promise<object>
     ): object | Promise<object>;
-    locate?(load: ISystemModule): string | Promise<string>;
-    translate?(load: ISystemModule): string | Promise<string>;
+    locate?(
+        this: SystemJSLoader.System,
+        load: ISystemModule
+    ): string | Promise<string>;
+    translate?(
+        this: SystemJSLoader.System,
+        load: ISystemModule
+    ): string | Promise<string>;
 }
 
 export interface IRuntime {
@@ -57,38 +68,44 @@ export interface IRuntime {
 }
 
 export class Runtime implements IRuntime {
+    private defaultDependencies: { [name: string]: string };
     // private defaultExtensions: string[];
     private esmLoader: ISystemPlugin;
     private localLoader: ISystemPlugin;
     private localRoot: string;
     private queue: Promise<any>;
-    private runtimeHost: IRuntimeHost;
+    // private runtimeHost: IRuntimeHost;
     private system: SystemJSLoader.System;
     private transpiler: ISystemPlugin;
     private useEsm: boolean;
 
     constructor({
-        // defaultExtensions = ['.js', '.ts', '.jsx', '.tsx'],
+        defaultDependencies = {},
+        defaultExtensions = ['.js', '.ts', '.jsx', '.tsx'],
         runtimeHost,
-        system = new SystemJS.constructor(),
         transpiler,
     }: IRuntimeOptions) {
-        // // this.defaultExtensions = defaultExtensions;
+        this.defaultDependencies = defaultDependencies;
+        // this.defaultExtensions = defaultExtensions;
         this.esmLoader = createEsmCdnLoader();
-        this.localLoader = createLocalLoader({ runtimeHost });
-        this.localRoot = system.baseURL.replace(
+        this.localLoader = createLocalLoader({
+            defaultExtensions,
+            runtimeHost,
+        });
+        this.queue = Promise.resolve();
+        // this.runtimeHost = runtimeHost;
+        this.system = new SystemJS.constructor();
+        this.localRoot = this.system.baseURL.replace(
             /^([a-zA-Z]+:\/\/)([^/]*)\/.*$/,
             '$1$2'
         );
-        this.queue = Promise.resolve();
-        this.runtimeHost = runtimeHost;
-        this.system = system;
         this.transpiler =
             transpiler === false
                 ? null
                 : transpiler ||
                   createTranspiler({
                       createRuntime,
+                      runtime: this,
                       runtimeHost,
                       typescriptVersion: TYPESCRIPT_VERSION,
                   });
@@ -97,18 +114,69 @@ export class Runtime implements IRuntime {
             typeof dynamicImport === 'function';
         this.system.registry.set(
             '@runtime-loader-esm',
-            system.newModule(this.esmLoader)
+            this.system.newModule(this.esmLoader)
         );
         this.system.registry.set(
             '@runtime-loader-local',
-            system.newModule(this.localLoader)
+            this.system.newModule(this.localLoader)
         );
         if (this.transpiler) {
             this.system.registry.set(
                 '@runtime-transpiler',
-                system.newModule(this.transpiler)
+                this.system.newModule(this.transpiler)
             );
         }
+
+        if (this.localRoot.charAt(this.localRoot.length - 1) === '/') {
+            this.localRoot = this.localRoot.slice(0, this.localRoot.length - 1);
+        }
+
+        if (!this.defaultDependencies['typescript']) {
+            this.defaultDependencies['typescript'] = TYPESCRIPT_VERSION;
+        }
+
+        type declareType = (...modules: any[]) => any;
+
+        const systemRegister = this.system.register;
+
+        this.system.register = function(
+            key: string | string[],
+            deps: string[] | declareType,
+            declare?: declareType
+        ) {
+            if (typeof key !== 'string') {
+                if (typeof deps === 'function') declare = deps;
+                deps = key;
+                key = undefined;
+            }
+            var registerDeclare = declare;
+            declare = function(_export, _context) {
+                return registerDeclare.call(
+                    this,
+                    function(
+                        name: string | { [key: string]: any },
+                        value: { [key: string]: any }
+                    ) {
+                        if (typeof name === 'object') {
+                            if (typeof name['default'] === 'object') {
+                                return _export(
+                                    addSyntheticDefaultExports(name['default'])
+                                );
+                            }
+                        } else if (
+                            name === 'default' &&
+                            typeof value === 'object'
+                        ) {
+                            return _export(addSyntheticDefaultExports(value));
+                        }
+                        return _export(name, value);
+                    },
+                    _context
+                );
+            };
+            if (key) return systemRegister.call(this, key, deps, declare);
+            else return systemRegister.call(this, deps, declare);
+        };
 
         this.system.config({
             meta: {
@@ -122,6 +190,10 @@ export class Runtime implements IRuntime {
                     esModule: true,
                     loader: '@runtime-loader-esm',
                 },
+                [`${SYSTEM_CDN_URL}/*`]: {
+                    // @ts-ignore
+                    esModule: true,
+                },
             },
             transpiler: this.transpiler ? '@runtime-transpiler' : false,
         });
@@ -129,7 +201,7 @@ export class Runtime implements IRuntime {
     }
 
     public import(entrypointPath: string): Promise<IModuleExports> {
-        this.queue = this.queue.then(() =>
+        const importPromise = this.queue.then(() =>
             this.buildConfig()
                 .then(config => {
                     this.system.config(config);
@@ -139,7 +211,9 @@ export class Runtime implements IRuntime {
                 .then(addSyntheticDefaultExports)
         );
 
-        return this.queue;
+        // this.queue = importPromise.catch(() => undefined);
+
+        return importPromise;
     }
 
     public invalidate(...pathnames: string[]): Promise<void> {
@@ -188,7 +262,7 @@ export class Runtime implements IRuntime {
         };
         const seen = new Set();
 
-        this.queue = this.queue.then(() => {
+        const invalidationPromise = this.queue.then(() => {
             const invalidations = pathnames.slice();
             const handleNextInvalidation = (): Promise<any> => {
                 if (!invalidations.length) return Promise.resolve();
@@ -215,29 +289,20 @@ export class Runtime implements IRuntime {
             return handleNextInvalidation();
         });
 
-        return this.queue;
+        this.queue = this.queue.catch(() => undefined);
+
+        return invalidationPromise;
     }
 
-    private buildConfig(): Promise<SystemJSLoader.Config> {
+    public buildConfig(): Promise<SystemJSLoader.Config> {
         const config = this.system.getConfig();
+        const dependencies = this.defaultDependencies;
 
         config.map = {};
 
-        const dependencies = Object.create(null);
-
-        return Promise.resolve(
-            this.runtimeHost.getFileContents('package.json')
-        ).then(pkgJsonStr => {
-            if (pkgJsonStr) {
-                try {
-                    const pkgJson = JSON.parse(pkgJsonStr);
-
-                    Object.assign(dependencies, pkgJson.devDependencies || {});
-                    Object.assign(dependencies, pkgJson.dependencies || {});
-                } catch (e) {
-                    // Do nothing
-                }
-            }
+        return this.system.import('package.json').then(pkgJson => {
+            Object.assign(dependencies, pkgJson.devDependencies || {});
+            Object.assign(dependencies, pkgJson.dependencies || {});
 
             const baseUrl = this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;
 
@@ -250,6 +315,10 @@ export class Runtime implements IRuntime {
 
             return config;
         });
+    }
+
+    public resolve(spec: string): Promise<string> {
+        return this.system.resolve(spec);
     }
 }
 

@@ -1,10 +1,10 @@
 /* eslint-env node */
 
-//@ts-check
 'use strict';
 
 const Typescript = require('typescript');
 const commonjsPlugin = require('rollup-plugin-commonjs');
+const nodeBuiltinsPlugin = require('rollup-plugin-node-builtins');
 const nodeResolvePlugin = require('rollup-plugin-node-resolve');
 const typescriptPlugin = require('rollup-plugin-typescript');
 
@@ -33,6 +33,7 @@ module.exports = [
                 ignoreGlobal: true,
                 ignore: ['fs'],
             }),
+            nodeBuiltinsPlugin(),
             typescriptPlugin({
                 target: 'es5',
                 typescript: Typescript,
@@ -61,6 +62,7 @@ module.exports = [
                 ignoreGlobal: true,
                 ignore: ['fs'],
             }),
+            nodeBuiltinsPlugin(),
             typescriptPlugin({
                 target: 'es2018',
                 typescript: Typescript,

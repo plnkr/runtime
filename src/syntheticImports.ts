@@ -1,10 +1,10 @@
 export function addSyntheticDefaultExports(esModule: {
     [key: string]: any;
 }): { [key: string]: any } {
-    let module = esModule;
+    let module;
 
     // only default export -> copy named exports down
-    if ('default' in module && Object.keys(module).length === 1) {
+    if ('default' in esModule && Object.keys(esModule).length === 1) {
         module = Object.create(null);
 
         // etc should aim to replicate Module object properties
@@ -14,19 +14,35 @@ export function addSyntheticDefaultExports(esModule: {
 
         module.default = esModule.default;
 
-        for (const namedExport of Object.keys(esModule.default)) {
+        const propertyDescriptors = Object.getOwnPropertyDescriptors(
+            esModule.default
+        );
+
+        for (const namedExport in propertyDescriptors) {
             if (namedExport === 'default') {
                 continue;
             }
 
-            const value = esModule.default[namedExport];
+            Object.defineProperty(
+                module,
+                namedExport,
+                propertyDescriptors[namedExport]
+            );
 
-            module[namedExport] =
-                typeof value === 'function'
-                    ? value.bind(esModule.default)
-                    : value;
+            // const value = esModule.default[namedExport];
+
+            // module[namedExport] = value;
+            // typeof value === 'function' &&
+            // value.prototype === Function.prototype
+            //     ? value.bind(esModule.default)
+            //     : value;
         }
     }
 
-    return module;
+    if (!('default' in esModule)) {
+        module = Object.assign(Object.create(null), esModule);
+        module.default = esModule;
+    }
+
+    return module || esModule;
 }
