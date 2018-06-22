@@ -170,4 +170,78 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
             .to.contain('Hello')
             .and.to.contain('World');
     });
+
+    it('will load css files', async () => {
+        const content = await runtimeCode;
+        const page = await browser.newPage();
+
+        await page.addScriptTag({ content });
+
+        const result = await page.evaluate(async function(useSystem) {
+            window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
+
+            const files = {
+                'style.css': 'h1 { color: red; }',
+                'index.js': `
+                    import styles from './style.css';
+                    export default styles;
+                `,
+            };
+            const runtime = new window['@plnkr/runtime'].Runtime({
+                runtimeHost: {
+                    getFileContents(pathname) {
+                        return files[pathname];
+                    },
+                },
+            });
+
+            const { element, markup } = await runtime.import('./index.js');
+
+            return {
+                elementToString: element.toString(),
+                markup,
+            };
+        }, useSystem);
+
+        expect(result).to.be.an.object();
+        expect(result.markup).to.equal('h1 { color: red; }');
+        expect(result.elementToString).to.equal('[object HTMLStyleElement]');
+    });
+
+    it('will load less files', async () => {
+        const content = await runtimeCode;
+        const page = await browser.newPage();
+
+        await page.addScriptTag({ content });
+
+        const result = await page.evaluate(async function(useSystem) {
+            window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
+
+            const files = {
+                'style.less': '@color: red; h1 { color: @color; }',
+                'index.js': `
+                    import styles from './style.less';
+                    export default styles;
+                `,
+            };
+            const runtime = new window['@plnkr/runtime'].Runtime({
+                runtimeHost: {
+                    getFileContents(pathname) {
+                        return files[pathname];
+                    },
+                },
+            });
+
+            const { element, markup } = await runtime.import('./index.js');
+
+            return {
+                elementToString: element.toString(),
+                markup,
+            };
+        }, useSystem);
+
+        expect(result).to.be.an.object();
+        expect(result.markup).to.equal('h1 {\n  color: red;\n}\n');
+        expect(result.elementToString).to.equal('[object HTMLStyleElement]');
+    });
 }

@@ -10,8 +10,7 @@
     ],
     "scripts": {
         "build:declarations": "tsc -d",
-        "build:entrypoints": "rollup -c",
-        "build": "npm run build:declarations && npm run build:entrypoints",
+        "build": "npm run build:declarations && rollup -c",
         "test": "lab -vf",
         "prebuild": "rm -rf ./dist/*",
         "pretest": "npm run build",
@@ -39,6 +38,7 @@
     },
     "homepage": "https://github.com/plnkr/runtime#readme",
     "devDependencies": {
+        "@types/less": "0.0.33",
         "@types/systemjs": "^0.20.6",
         "code": "^5.2.0",
         "eslint": "^4.19.1",

@@ -10,6 +10,7 @@ export interface ILoadError extends Error {
 }
 
 export interface ILocalLoaderOptions {
+    cssLoader: ISystemPlugin;
     defaultExtensions: string[];
     runtimeHost: IRuntimeHost;
 }
@@ -46,6 +47,7 @@ function tryCandidates(
 }
 
 export function createLocalLoader({
+    cssLoader,
     defaultExtensions,
     runtimeHost,
 }: ILocalLoaderOptions): ISystemPlugin {
@@ -129,7 +131,22 @@ export function createLocalLoader({
                 return JSON.parse(load.source);
             }
 
+            if (load.address.match(/\.(css|less)$/)) {
+                return cssLoader.instantiate.call(
+                    this,
+                    load,
+                    systemInstantiate
+                );
+            }
+
             return systemInstantiate(load);
+        },
+        translate(load) {
+            if (load.address.match(/\.(css|less)$/)) {
+                return cssLoader.translate.call(this, load);
+            }
+
+            return load.source;
         },
     };
 }

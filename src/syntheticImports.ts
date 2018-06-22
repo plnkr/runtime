@@ -1,11 +1,19 @@
 export function addSyntheticDefaultExports(esModule: {
     [key: string]: any;
+    [Symbol.toStringTag]?: string;
 }): { [key: string]: any } {
     let module;
 
     // only default export -> copy named exports down
-    if ('default' in esModule && Object.keys(esModule).length === 1) {
-        module = Object.create(null);
+    if (
+        'default' in esModule &&
+        (Object.keys(esModule).length === 1 ||
+            esModule[Symbol.toStringTag].toLowerCase() === 'module')
+    ) {
+        module =
+            typeof esModule.default === 'function'
+                ? esModule.default
+                : Object.create(null);
 
         // etc should aim to replicate Module object properties
         Object.defineProperty(module, Symbol.toStringTag, {

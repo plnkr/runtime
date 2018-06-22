@@ -1,6 +1,7 @@
 import convertRange from 'sver/convert-range';
 import SystemJS from 'systemjs';
 
+import { createCssLoader } from './cssLoader';
 import { createEsmCdnLoader, dynamicImport } from './esmLoader';
 import { createLocalLoader } from './localLoader';
 import { addSyntheticDefaultExports } from './syntheticImports';
@@ -8,6 +9,7 @@ import { createTranspiler } from './transpiler';
 
 const ESM_CDN_URL = 'https://dev.jspm.io';
 const SYSTEM_CDN_URL = 'https://system-dev.jspm.io';
+const LESS_VERSION = '2.7';
 const TYPESCRIPT_VERSION = '2.8';
 
 declare global {
@@ -52,7 +54,7 @@ export interface ISystemPlugin {
         this: SystemJSLoader.System,
         load: ISystemModule,
         systemInstantiate: (load: ISystemModule) => object | Promise<object>
-    ): object | Promise<object>;
+    ): void | object | Promise<void | object>;
     locate?(
         this: SystemJSLoader.System,
         load: ISystemModule
@@ -85,10 +87,15 @@ export class Runtime implements IRuntime {
         runtimeHost,
         transpiler,
     }: IRuntimeOptions) {
+        const cssLoader = createCssLoader({
+            runtime: this,
+        });
+
         this.defaultDependencies = defaultDependencies;
         // this.defaultExtensions = defaultExtensions;
         this.esmLoader = createEsmCdnLoader();
         this.localLoader = createLocalLoader({
+            cssLoader,
             defaultExtensions,
             runtimeHost,
         });
@@ -112,6 +119,11 @@ export class Runtime implements IRuntime {
         this.useEsm =
             !window.PLNKR_RUNTIME_USE_SYSTEM &&
             typeof dynamicImport === 'function';
+
+        this.system.registry.set(
+            '@runtime-loader-css',
+            this.system.newModule(cssLoader)
+        );
         this.system.registry.set(
             '@runtime-loader-esm',
             this.system.newModule(this.esmLoader)
@@ -133,6 +145,10 @@ export class Runtime implements IRuntime {
 
         if (!this.defaultDependencies['typescript']) {
             this.defaultDependencies['typescript'] = TYPESCRIPT_VERSION;
+        }
+
+        if (!this.defaultDependencies['less']) {
+            this.defaultDependencies['less'] = LESS_VERSION;
         }
 
         type declareType = (...modules: any[]) => any;
@@ -185,6 +201,12 @@ export class Runtime implements IRuntime {
                     esModule: true,
                     loader: '@runtime-loader-local',
                 },
+                '*.css': {
+                    loader: '@runtime-loader-css',
+                },
+                '*.less': {
+                    loader: '@runtime-loader-css',
+                },
                 [`${ESM_CDN_URL}/*`]: {
                     // @ts-ignore
                     esModule: true,
@@ -206,7 +228,9 @@ export class Runtime implements IRuntime {
                 .then(config => {
                     this.system.config(config);
 
-                    return this.system.import(entrypointPath);
+                    return this.system
+                        .import(entrypointPath)
+                        .catch(err => Promise.reject(err.originalErr));
                 })
                 .then(addSyntheticDefaultExports)
         );
@@ -300,21 +324,24 @@ export class Runtime implements IRuntime {
 
         config.map = {};
 
-        return this.system.import('package.json').then(pkgJson => {
-            Object.assign(dependencies, pkgJson.devDependencies || {});
-            Object.assign(dependencies, pkgJson.dependencies || {});
+        return this.system
+            .import('package.json')
+            .catch(() => ({}))
+            .then(pkgJson => {
+                Object.assign(dependencies, pkgJson.devDependencies || {});
+                Object.assign(dependencies, pkgJson.dependencies || {});
 
-            const baseUrl = this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;
+                const baseUrl = this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;
 
-            for (const name in dependencies) {
-                const range = dependencies[name];
-                const pkgId = `${baseUrl}/${name}${createJspmRange(range)}`;
+                for (const name in dependencies) {
+                    const range = dependencies[name];
+                    const pkgId = `${baseUrl}/${name}${createJspmRange(range)}`;
 
-                config.map[name] = pkgId;
-            }
+                    config.map[name] = pkgId;
+                }
 
-            return config;
-        });
+                return config;
+            });
     }
 
     public resolve(spec: string): Promise<string> {
