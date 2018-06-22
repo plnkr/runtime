@@ -5998,11 +5998,83 @@
 
     var SystemJS = unwrapExports(system_src);
 
+    // Todo create factory functions for less loader that takes in the runtime;
+    function createCssLoader(_a) {
+        var runtime = _a.runtime;
+        return {
+            instantiate: function (load) {
+                if (typeof document === 'undefined') {
+                    return;
+                }
+                var style = document.createElement('style');
+                style.type = 'text/css';
+                style.innerHTML = load.metadata.style;
+                document.head.appendChild(style);
+                return {
+                    element: style,
+                    markup: load.metadata.style,
+                };
+            },
+            translate: function (load) {
+                var transpiler;
+                if (/\.css$/.test(load.address)) {
+                    transpiler = cssTranspiler;
+                }
+                else if (/\.less$/.test(load.address)) {
+                    transpiler = lessTranspiler;
+                }
+                else {
+                    throw new Error("Unexpected css transpilation request for '" + load.address + "'");
+                }
+                return Promise.resolve(transpiler.call(this, load.source, {
+                    address: load.address,
+                    runtime: runtime,
+                })).then(function (result) {
+                    load.metadata.style = result.css;
+                    load.metadata.styleSourceMap = result.map;
+                    if (result.moduleFormat) {
+                        load.metadata.format = result.moduleFormat;
+                    }
+                    return result.moduleSource || '';
+                });
+            },
+        };
+    }
+    function cssTranspiler(css) {
+        return { css: css };
+    }
+    function lessTranspiler(css, _a) {
+        var address = _a.address, runtime = _a.runtime;
+        return runtime
+            .import('less/browser')
+            .then(function (browser) {
+            var less = browser(window, {});
+            return less.render(css, {
+                filename: address,
+            });
+        })
+            .then(function (output) {
+            return {
+                css: output.css,
+                map: output.map,
+                // style plugins can optionally return a modular module
+                // source as well as the stylesheet above
+                moduleSource: null,
+                moduleFormat: null,
+            };
+        });
+    }
+
     function addSyntheticDefaultExports(esModule) {
         var module;
         // only default export -> copy named exports down
-        if ('default' in esModule && Object.keys(esModule).length === 1) {
-            module = Object.create(null);
+        if ('default' in esModule &&
+            (Object.keys(esModule).length === 1 ||
+                esModule[Symbol.toStringTag].toLowerCase() === 'module')) {
+            module =
+                typeof esModule.default === 'function'
+                    ? esModule.default
+                    : Object.create(null);
             // etc should aim to replicate Module object properties
             Object.defineProperty(module, Symbol.toStringTag, {
                 value: 'module',
@@ -6083,7 +6155,7 @@
         return tryNext(0, {});
     }
     function createLocalLoader(_a) {
-        var defaultExtensions = _a.defaultExtensions, runtimeHost = _a.runtimeHost;
+        var cssLoader = _a.cssLoader, defaultExtensions = _a.defaultExtensions, runtimeHost = _a.runtimeHost;
         return {
             locate: function (load) {
                 if (load.address.indexOf(this.baseURL) !== 0) {
@@ -6138,7 +6210,16 @@
                 if (load.address.match(/\.json$/i)) {
                     return JSON.parse(load.source);
                 }
+                if (load.address.match(/\.(css|less)$/)) {
+                    return cssLoader.instantiate.call(this, load, systemInstantiate);
+                }
                 return systemInstantiate(load);
+            },
+            translate: function (load) {
+                if (load.address.match(/\.(css|less)$/)) {
+                    return cssLoader.translate.call(this, load);
+                }
+                return load.source;
             },
         };
     }
@@ -6172,14 +6253,19 @@
 
     var ESM_CDN_URL = 'https://dev.jspm.io';
     var SYSTEM_CDN_URL = 'https://system-dev.jspm.io';
+    var LESS_VERSION = '2.7';
     var TYPESCRIPT_VERSION = '2.8';
     var Runtime = /** @class */ (function () {
         function Runtime(_a) {
             var _b = _a.defaultDependencies, defaultDependencies = _b === void 0 ? {} : _b, _c = _a.defaultExtensions, defaultExtensions = _c === void 0 ? ['.js', '.ts', '.jsx', '.tsx'] : _c, runtimeHost = _a.runtimeHost, transpiler = _a.transpiler;
+            var cssLoader = createCssLoader({
+                runtime: this,
+            });
             this.defaultDependencies = defaultDependencies;
             // this.defaultExtensions = defaultExtensions;
             this.esmLoader = createEsmCdnLoader();
             this.localLoader = createLocalLoader({
+                cssLoader: cssLoader,
                 defaultExtensions: defaultExtensions,
                 runtimeHost: runtimeHost,
             });
@@ -6200,6 +6286,7 @@
             this.useEsm =
                 !window.PLNKR_RUNTIME_USE_SYSTEM &&
                     typeof dynamicImport === 'function';
+            this.system.registry.set('@runtime-loader-css', this.system.newModule(cssLoader));
             this.system.registry.set('@runtime-loader-esm', this.system.newModule(this.esmLoader));
             this.system.registry.set('@runtime-loader-local', this.system.newModule(this.localLoader));
             if (this.transpiler) {
@@ -6210,6 +6297,9 @@
             }
             if (!this.defaultDependencies['typescript']) {
                 this.defaultDependencies['typescript'] = TYPESCRIPT_VERSION;
+            }
+            if (!this.defaultDependencies['less']) {
+                this.defaultDependencies['less'] = LESS_VERSION;
             }
             var systemRegister = this.system.register;
             this.system.register = function (key, deps, declare) {
@@ -6246,6 +6336,12 @@
                         esModule: true,
                         loader: '@runtime-loader-local',
                     },
+                    _d['*.css'] = {
+                        loader: '@runtime-loader-css',
+                    },
+                    _d['*.less'] = {
+                        loader: '@runtime-loader-css',
+                    },
                     _d[ESM_CDN_URL + "/*"] = {
                         // @ts-ignore
                         esModule: true,
@@ -6267,7 +6363,9 @@
                 return _this.buildConfig()
                     .then(function (config) {
                     _this.system.config(config);
-                    return _this.system.import(entrypointPath);
+                    return _this.system
+                        .import(entrypointPath)
+                        .catch(function (err) { return Promise.reject(err.originalErr); });
                 })
                     .then(addSyntheticDefaultExports);
             });
@@ -6348,7 +6446,10 @@
             var config = this.system.getConfig();
             var dependencies = this.defaultDependencies;
             config.map = {};
-            return this.system.import('package.json').then(function (pkgJson) {
+            return this.system
+                .import('package.json')
+                .catch(function () { return ({}); })
+                .then(function (pkgJson) {
                 Object.assign(dependencies, pkgJson.devDependencies || {});
                 Object.assign(dependencies, pkgJson.dependencies || {});
                 var baseUrl = _this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;

@@ -5941,11 +5941,81 @@ var system_src = createCommonjsModule(function (module) {
 
 var SystemJS = unwrapExports(system_src);
 
+// Todo create factory functions for less loader that takes in the runtime;
+function createCssLoader({ runtime }) {
+    return {
+        instantiate(load) {
+            if (typeof document === 'undefined') {
+                return;
+            }
+            const style = document.createElement('style');
+            style.type = 'text/css';
+            style.innerHTML = load.metadata.style;
+            document.head.appendChild(style);
+            return {
+                element: style,
+                markup: load.metadata.style,
+            };
+        },
+        translate(load) {
+            let transpiler;
+            if (/\.css$/.test(load.address)) {
+                transpiler = cssTranspiler;
+            }
+            else if (/\.less$/.test(load.address)) {
+                transpiler = lessTranspiler;
+            }
+            else {
+                throw new Error(`Unexpected css transpilation request for '${load.address}'`);
+            }
+            return Promise.resolve(transpiler.call(this, load.source, {
+                address: load.address,
+                runtime,
+            })).then((result) => {
+                load.metadata.style = result.css;
+                load.metadata.styleSourceMap = result.map;
+                if (result.moduleFormat) {
+                    load.metadata.format = result.moduleFormat;
+                }
+                return result.moduleSource || '';
+            });
+        },
+    };
+}
+function cssTranspiler(css) {
+    return { css };
+}
+function lessTranspiler(css, { address, runtime }) {
+    return runtime
+        .import('less/browser')
+        .then((browser) => {
+        const less = browser(window, {});
+        return less.render(css, {
+            filename: address,
+        });
+    })
+        .then(output => {
+        return {
+            css: output.css,
+            map: output.map,
+            // style plugins can optionally return a modular module
+            // source as well as the stylesheet above
+            moduleSource: null,
+            moduleFormat: null,
+        };
+    });
+}
+
 function addSyntheticDefaultExports(esModule) {
     let module;
     // only default export -> copy named exports down
-    if ('default' in esModule && Object.keys(esModule).length === 1) {
-        module = Object.create(null);
+    if ('default' in esModule &&
+        (Object.keys(esModule).length === 1 ||
+            esModule[Symbol.toStringTag].toLowerCase() === 'module')) {
+        module =
+            typeof esModule.default === 'function'
+                ? esModule.default
+                : Object.create(null);
         // etc should aim to replicate Module object properties
         Object.defineProperty(module, Symbol.toStringTag, {
             value: 'module',
@@ -6023,7 +6093,7 @@ function tryCandidates(candidates, loader) {
     };
     return tryNext(0, {});
 }
-function createLocalLoader({ defaultExtensions, runtimeHost, }) {
+function createLocalLoader({ cssLoader, defaultExtensions, runtimeHost, }) {
     return {
         locate(load) {
             if (load.address.indexOf(this.baseURL) !== 0) {
@@ -6074,7 +6144,16 @@ function createLocalLoader({ defaultExtensions, runtimeHost, }) {
             if (load.address.match(/\.json$/i)) {
                 return JSON.parse(load.source);
             }
+            if (load.address.match(/\.(css|less)$/)) {
+                return cssLoader.instantiate.call(this, load, systemInstantiate);
+            }
             return systemInstantiate(load);
+        },
+        translate(load) {
+            if (load.address.match(/\.(css|less)$/)) {
+                return cssLoader.translate.call(this, load);
+            }
+            return load.source;
         },
     };
 }
@@ -6106,13 +6185,18 @@ function createTranspiler({ runtime, }) {
 
 const ESM_CDN_URL = 'https://dev.jspm.io';
 const SYSTEM_CDN_URL = 'https://system-dev.jspm.io';
+const LESS_VERSION = '2.7';
 const TYPESCRIPT_VERSION = '2.8';
 class Runtime {
     constructor({ defaultDependencies = {}, defaultExtensions = ['.js', '.ts', '.jsx', '.tsx'], runtimeHost, transpiler, }) {
+        const cssLoader = createCssLoader({
+            runtime: this,
+        });
         this.defaultDependencies = defaultDependencies;
         // this.defaultExtensions = defaultExtensions;
         this.esmLoader = createEsmCdnLoader();
         this.localLoader = createLocalLoader({
+            cssLoader,
             defaultExtensions,
             runtimeHost,
         });
@@ -6133,6 +6217,7 @@ class Runtime {
         this.useEsm =
             !window.PLNKR_RUNTIME_USE_SYSTEM &&
                 typeof dynamicImport === 'function';
+        this.system.registry.set('@runtime-loader-css', this.system.newModule(cssLoader));
         this.system.registry.set('@runtime-loader-esm', this.system.newModule(this.esmLoader));
         this.system.registry.set('@runtime-loader-local', this.system.newModule(this.localLoader));
         if (this.transpiler) {
@@ -6143,6 +6228,9 @@ class Runtime {
         }
         if (!this.defaultDependencies['typescript']) {
             this.defaultDependencies['typescript'] = TYPESCRIPT_VERSION;
+        }
+        if (!this.defaultDependencies['less']) {
+            this.defaultDependencies['less'] = LESS_VERSION;
         }
         const systemRegister = this.system.register;
         this.system.register = function (key, deps, declare) {
@@ -6179,6 +6267,12 @@ class Runtime {
                     esModule: true,
                     loader: '@runtime-loader-local',
                 },
+                '*.css': {
+                    loader: '@runtime-loader-css',
+                },
+                '*.less': {
+                    loader: '@runtime-loader-css',
+                },
                 [`${ESM_CDN_URL}/*`]: {
                     // @ts-ignore
                     esModule: true,
@@ -6197,7 +6291,9 @@ class Runtime {
         const importPromise = this.queue.then(() => this.buildConfig()
             .then(config => {
             this.system.config(config);
-            return this.system.import(entrypointPath);
+            return this.system
+                .import(entrypointPath)
+                .catch(err => Promise.reject(err.originalErr));
         })
             .then(addSyntheticDefaultExports));
         // this.queue = importPromise.catch(() => undefined);
@@ -6261,7 +6357,10 @@ class Runtime {
         const config = this.system.getConfig();
         const dependencies = this.defaultDependencies;
         config.map = {};
-        return this.system.import('package.json').then(pkgJson => {
+        return this.system
+            .import('package.json')
+            .catch(() => ({}))
+            .then(pkgJson => {
             Object.assign(dependencies, pkgJson.devDependencies || {});
             Object.assign(dependencies, pkgJson.dependencies || {});
             const baseUrl = this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;

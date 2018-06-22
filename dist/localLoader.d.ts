@@ -6,7 +6,8 @@ export interface ILoadError extends Error {
     loadErrors: LoadErrors;
 }
 export interface ILocalLoaderOptions {
+    cssLoader: ISystemPlugin;
     defaultExtensions: string[];
     runtimeHost: IRuntimeHost;
 }
-export declare function createLocalLoader({defaultExtensions, runtimeHost}: ILocalLoaderOptions): ISystemPlugin;
+export declare function createLocalLoader({cssLoader, defaultExtensions, runtimeHost}: ILocalLoaderOptions): ISystemPlugin;

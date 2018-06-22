@@ -28,7 +28,7 @@ export interface ISystemModule {
 }
 export interface ISystemPlugin {
     fetch?(this: SystemJSLoader.System, load: ISystemModule, systemFetch: (load: ISystemModule) => string | Promise<string>): string | Promise<string>;
-    instantiate?(this: SystemJSLoader.System, load: ISystemModule, systemInstantiate: (load: ISystemModule) => object | Promise<object>): object | Promise<object>;
+    instantiate?(this: SystemJSLoader.System, load: ISystemModule, systemInstantiate: (load: ISystemModule) => object | Promise<object>): void | object | Promise<void | object>;
     locate?(this: SystemJSLoader.System, load: ISystemModule): string | Promise<string>;
     translate?(this: SystemJSLoader.System, load: ISystemModule): string | Promise<string>;
 }
