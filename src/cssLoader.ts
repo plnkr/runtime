@@ -1,4 +1,4 @@
-import { IRuntime, ISystemModule, ISystemPlugin } from './';
+import { IRuntime, ISystemModule, ISystemPlugin } from '.';
 
 interface CssTranspilerResult {
     css: string;
@@ -23,18 +23,26 @@ interface CssTranspilerOptions {
 // Todo create factory functions for less loader that takes in the runtime;
 
 export function createCssLoader({ runtime }: CssLoaderOptions): ISystemPlugin {
+    const stylesheets = new Map();
+
     return {
         instantiate(load: ISystemModule) {
             if (typeof document === 'undefined') {
                 return;
             }
 
+            const prevStyleElement = stylesheets.get(load.name);
+
             const style = document.createElement('style');
 
             style.type = 'text/css';
             style.innerHTML = load.metadata.style;
 
-            document.head.appendChild(style);
+            if (prevStyleElement) {
+                document.head.replaceChild(style, prevStyleElement);
+            } else {
+                document.head.appendChild(style);
+            }
 
             return {
                 element: style,

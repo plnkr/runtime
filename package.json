@@ -4,7 +4,7 @@
     "description": "",
     "main": "dist/runtime.js",
     "module": "dist/runtime.esm.js",
-    "types": "./dist/runtime.d.ts",
+    "types": "./dist/index.d.ts",
     "files": [
         "dist"
     ],

@@ -171,6 +171,50 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
             .and.to.contain('World');
     });
 
+    it('will correctly invalidate dependents', async () => {
+        const content = await runtimeCode;
+        const page = await browser.newPage();
+
+        await page.addScriptTag({ content });
+
+        const result = await page.evaluate(async function(useSystem) {
+            window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
+
+            const files = {
+                'dependency.js': `
+                    export const dependency = Date.now();
+                `,
+                'index.js': `
+                    export { dependency } from './dependency';
+
+                    export const index = Date.now();
+                `,
+            };
+            const runtime = new window['@plnkr/runtime'].Runtime({
+                runtimeHost: {
+                    getFileContents(pathname) {
+                        return files[pathname];
+                    },
+                },
+            });
+
+            const initial = await runtime.import('./index');
+
+            await runtime.invalidate('./dependency');
+
+            const updated = await runtime.import('./index');
+
+            return { initial, updated };
+        }, useSystem);
+
+        expect(result.updated.dependency)
+            .to.be.a.number()
+            .and.greaterThan(result.initial.dependency);
+        expect(result.updated.index)
+            .to.be.a.number()
+            .and.greaterThan(result.initial.index);
+    });
+
     it('will load css files', async () => {
         const content = await runtimeCode;
         const page = await browser.newPage();

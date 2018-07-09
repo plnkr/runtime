@@ -1,6 +1,6 @@
 import { extname } from 'path';
 
-import { IRuntimeHost, ISystemPlugin } from './';
+import { IRuntimeHost, ISystemPlugin } from '.';
 
 type loaderFunction = (pathname: string) => string | Promise<string>;
 export type LoadErrors = { [pathname: string]: Error };
@@ -63,6 +63,8 @@ export function createLocalLoader({
                         )
                     );
                 }
+
+                return load.address;
             }
 
             const initialAddress = load.address;
@@ -87,12 +89,16 @@ export function createLocalLoader({
             return tryCandidates(candidates, loadFromHost).then(
                 ({ content, pathname }) => {
                     load.source = content;
+                    load.address = initialAddress.replace(localPath, pathname);
+                    load.name = pathname;
 
-                    return initialAddress.replace(localPath, pathname);
+                    load.metadata.initialPath = localPath;
+
+                    return load.address;
                 }
             );
         },
-        fetch(load, systemFetch) {
+        fetch(load) {
             if (typeof load.source === 'string') {
                 return load.source;
             }
@@ -115,12 +121,16 @@ export function createLocalLoader({
             const loadWithSystem = (pathname: string) => {
                 load.address = initialAddress.replace(localPath, pathname);
 
-                return systemFetch(load);
+                return fetch(load.address).then(
+                    res =>
+                        res.ok ? res.text() : Promise.reject('Loading failed')
+                );
             };
 
             return tryCandidates(candidates, loadWithSystem).then(
                 ({ content, pathname }) => {
                     load.address = initialAddress.replace(localPath, pathname);
+                    load.name = pathname;
 
                     return content;
                 }

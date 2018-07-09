@@ -5,6 +5,7 @@ import { createCssLoader } from './cssLoader';
 import { createEsmCdnLoader, dynamicImport } from './esmLoader';
 import { createLocalLoader } from './localLoader';
 import { addSyntheticDefaultExports } from './syntheticImports';
+import { createSystemLoader } from './systemLoader';
 import { createTranspiler } from './transpiler';
 
 const ESM_CDN_URL = 'https://dev.jspm.io';
@@ -78,6 +79,7 @@ export class Runtime implements IRuntime {
     private queue: Promise<any>;
     // private runtimeHost: IRuntimeHost;
     private system: SystemJSLoader.System;
+    private systemLoader: ISystemPlugin;
     private transpiler: ISystemPlugin;
     private useEsm: boolean;
 
@@ -93,15 +95,18 @@ export class Runtime implements IRuntime {
 
         this.defaultDependencies = defaultDependencies;
         // this.defaultExtensions = defaultExtensions;
-        this.esmLoader = createEsmCdnLoader();
+        this.esmLoader = createEsmCdnLoader({ cssLoader });
         this.localLoader = createLocalLoader({
             cssLoader,
             defaultExtensions,
             runtimeHost,
         });
+        this.systemLoader = createSystemLoader();
         this.queue = Promise.resolve();
         // this.runtimeHost = runtimeHost;
         this.system = new SystemJS.constructor();
+        // Hack to force system to never use node's require
+        this.system._nodeRequire = null;
         this.localRoot = this.system.baseURL.replace(
             /^([a-zA-Z]+:\/\/)([^/]*)\/.*$/,
             '$1$2'
@@ -131,6 +136,10 @@ export class Runtime implements IRuntime {
         this.system.registry.set(
             '@runtime-loader-local',
             this.system.newModule(this.localLoader)
+        );
+        this.system.registry.set(
+            '@runtime-loader-system',
+            this.system.newModule(this.systemLoader)
         );
         if (this.transpiler) {
             this.system.registry.set(
@@ -179,6 +188,8 @@ export class Runtime implements IRuntime {
                                     addSyntheticDefaultExports(name['default'])
                                 );
                             }
+
+                            return _export(addSyntheticDefaultExports(name));
                         } else if (
                             name === 'default' &&
                             typeof value === 'object'
@@ -215,6 +226,7 @@ export class Runtime implements IRuntime {
                 [`${SYSTEM_CDN_URL}/*`]: {
                     // @ts-ignore
                     esModule: true,
+                    loader: '@runtime-loader-system',
                 },
             },
             transpiler: this.transpiler ? '@runtime-transpiler' : false,
@@ -268,9 +280,20 @@ export class Runtime implements IRuntime {
                 }
             }
 
-            return dependentGraph.has(normalizedPath)
-                ? Array.from(dependentGraph.get(normalizedPath))
-                : [];
+            if (dependentGraph.has(normalizedPath)) {
+                return Array.from(dependentGraph.get(normalizedPath));
+            }
+
+            const normalizedPathWithoutExt = normalizedPath.replace(
+                /\.[^.]+$/,
+                ''
+            );
+
+            if (dependentGraph.has(normalizedPathWithoutExt)) {
+                return Array.from(dependentGraph.get(normalizedPathWithoutExt));
+            }
+
+            return [];
         };
         const normalizedPaths = new Map();
         const normalizePath = (key: string): Promise<string> => {
@@ -298,6 +321,9 @@ export class Runtime implements IRuntime {
                         seen.add(resolvedPathname);
 
                         this.system.registry.delete(resolvedPathname);
+                        this.system.registry.delete(
+                            resolvedPathname.replace(/\.[^.]+$/, '')
+                        );
 
                         const dependents = getDependents(resolvedPathname);
 
@@ -325,7 +351,7 @@ export class Runtime implements IRuntime {
         config.map = {};
 
         return this.system
-            .import('package.json')
+            .import('./package.json')
             .catch(() => ({}))
             .then(pkgJson => {
                 Object.assign(dependencies, pkgJson.devDependencies || {});
