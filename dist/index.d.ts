@@ -1,52 +1,42 @@
-/// <reference types="systemjs" />
-declare global  {
-    interface Window {
-        PLNKR_RUNTIME_USE_SYSTEM: boolean;
-    }
+import RegisterLoader from 'es-module-loader/core/register-loader';
+import { ModuleNamespace, ProcessAnonRegister } from 'es-module-loader/core/loader-polyfill';
+export interface RuntimeHost {
+    getFileContents(key: string): string | PromiseLike<string>;
+    getCanonicalPath?(key: string): string | PromiseLike<string>;
+    resolveBareDependency?(key: string): string | PromiseLike<string>;
 }
-export declare type IModuleExports = any;
-export interface IRuntimeHost {
-    fallbackToSystemFetch?: boolean;
-    getFileContents(pathname: string): string | Promise<string> | undefined | Promise<undefined>;
-    transpile?(load: ISystemModule): string | Promise<string>;
-}
-export interface IRuntimeOptions {
-    defaultDependencies?: {
-        [name: string]: string;
+export interface RuntimeOptions {
+    defaultDependencyVersions?: {
+        [key: string]: string;
     };
-    defaultExtensions?: string[];
-    processModule?: string;
-    runtimeHost: IRuntimeHost;
-    system?: SystemJSLoader.System;
-    transpiler?: ISystemPlugin | false;
+    host: RuntimeHost;
+    useSystem?: boolean;
 }
-export interface ISystemModule {
-    name: string;
-    address: string;
-    source?: string;
-    metadata?: any;
+export interface AfterUnloadEvent {
+    defaultPrevented: boolean;
+    preventDefault(): void;
 }
-export interface ISystemPlugin {
-    fetch?(this: SystemJSLoader.System, load: ISystemModule, systemFetch: (load: ISystemModule) => string | Promise<string>): string | Promise<string>;
-    instantiate?(this: SystemJSLoader.System, load: ISystemModule, systemInstantiate: (load: ISystemModule) => object | Promise<object>): void | object | Promise<void | object>;
-    locate?(this: SystemJSLoader.System, load: ISystemModule): string | Promise<string>;
-    translate?(this: SystemJSLoader.System, load: ISystemModule): string | Promise<string>;
+interface ModuleNamespaceClass {
+    new (baseObject: any): ModuleNamespace;
 }
-export interface IRuntime {
-    import(entrypointPath: string): Promise<IModuleExports>;
+export declare class RuntimeModuleNamespace extends ModuleNamespace {
+    constructor(baseObject: any);
 }
-export declare class Runtime implements IRuntime {
-    private defaultDependencies;
-    private esmLoader;
-    private localLoader;
-    private localRoot;
+export declare class Runtime extends RegisterLoader {
+    private readonly dependencies;
+    private readonly dependents;
+    private readonly baseUri;
     private queue;
-    private system;
-    private transpiler;
-    private useEsm;
-    constructor({defaultDependencies, defaultExtensions, runtimeHost, transpiler}: IRuntimeOptions);
-    import(entrypointPath: string): Promise<IModuleExports>;
+    readonly defaultDependencyVersions: {
+        [key: string]: string;
+    };
+    readonly host: RuntimeHost;
+    readonly useSystem: boolean;
+    [RegisterLoader.moduleNamespace]: ModuleNamespaceClass;
+    constructor({ defaultDependencyVersions, host, useSystem, }: RuntimeOptions);
+    [RegisterLoader.traceResolvedStaticDependency](parentKey: string, _: string, resolvedKey: string): void;
+    [RegisterLoader.resolve](key: string, parentKey?: string): Promise<string>;
+    [RegisterLoader.instantiate](key: string, processAnonRegister: ProcessAnonRegister): Promise<ModuleNamespace | void>;
     invalidate(...pathnames: string[]): Promise<void>;
-    buildConfig(): Promise<SystemJSLoader.Config>;
-    resolve(spec: string): Promise<string>;
 }
+export {};

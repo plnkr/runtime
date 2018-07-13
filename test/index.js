@@ -49,7 +49,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
             window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
 
             return new window['@plnkr/runtime'].Runtime({
-                runtimeHost: {
+                host: {
                     getFileContents() {},
                 },
             });
@@ -68,17 +68,16 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
             window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
 
             const runtime = new window['@plnkr/runtime'].Runtime({
-                runtimeHost: {
+                host: {
                     getFileContents() {},
                 },
             });
-            const pathname = await runtime.resolve('package.json');
+            const pathname = await runtime.resolve('./package.json');
 
-            return { localRoot: runtime.localRoot, pathname };
+            return { pathname };
         }, useSystem);
 
         expect(result).to.be.an.object();
-        expect(result.localRoot).to.equal('about:blank');
         expect(result.pathname).to.equal('about:blank/package.json');
     });
 
@@ -92,7 +91,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
             window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
 
             const runtime = new window['@plnkr/runtime'].Runtime({
-                runtimeHost: {
+                host: {
                     getFileContents(pathname) {
                         if (pathname === 'package.json')
                             return JSON.stringify({
@@ -132,8 +131,6 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                 'Hello.js': `
                     import React, { Component } from 'react';
 
-                    console.log({ React, Component }, React.Component === Component)
-
                     export default class Hello extends Component {
                         render() {
                             return <h1>Hello {this.props.name}</h1>;
@@ -141,7 +138,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                     }
                 `,
                 'index.js': `
-                    import React, { Component } from 'react';
+                    import React from 'react';
                     import { renderToString } from 'react-dom/server';
 
                     import Hello from './Hello';
@@ -150,7 +147,16 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                 `,
             };
             const runtime = new window['@plnkr/runtime'].Runtime({
-                runtimeHost: {
+                host: {
+                    getCanonicalPath(pathname) {
+                        switch (pathname) {
+                            case 'Hello':
+                                return 'Hello.js';
+                            case 'index':
+                                return 'index.js';
+                        }
+                        return pathname;
+                    },
                     getFileContents(pathname) {
                         return files[pathname];
                     },
@@ -191,7 +197,16 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                 `,
             };
             const runtime = new window['@plnkr/runtime'].Runtime({
-                runtimeHost: {
+                host: {
+                    getCanonicalPath(pathname) {
+                        switch (pathname) {
+                            case 'dependency':
+                                return 'dependency.js';
+                            case 'index':
+                                return 'index.js';
+                        }
+                        return pathname;
+                    },
                     getFileContents(pathname) {
                         return files[pathname];
                     },
@@ -227,12 +242,11 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
             const files = {
                 'style.css': 'h1 { color: red; }',
                 'index.js': `
-                    import styles from './style.css';
-                    export default styles;
+                    export { element, markup } from './style.css';
                 `,
             };
             const runtime = new window['@plnkr/runtime'].Runtime({
-                runtimeHost: {
+                host: {
                     getFileContents(pathname) {
                         return files[pathname];
                     },
@@ -256,6 +270,9 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
         const content = await runtimeCode;
         const page = await browser.newPage();
 
+        // page.on('console', e => console.log(e.text()));
+        // page.on('pageerror', e => console.trace(e.originalErr || e));
+
         await page.addScriptTag({ content });
 
         const result = await page.evaluate(async function(useSystem) {
@@ -264,12 +281,11 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
             const files = {
                 'style.less': '@color: red; h1 { color: @color; }',
                 'index.js': `
-                    import styles from './style.less';
-                    export default styles;
+                    export { element, markup } from './style.less';
                 `,
             };
             const runtime = new window['@plnkr/runtime'].Runtime({
-                runtimeHost: {
+                host: {
                     getFileContents(pathname) {
                         return files[pathname];
                     },

@@ -1,334 +1,318 @@
+import { toStringTag } from 'es-module-loader/core/common';
+import RegisterLoader, {
+    LinkRecord,
+    LoadRecord,
+} from 'es-module-loader/core/register-loader';
+import {
+    ModuleNamespace,
+    ProcessAnonRegister,
+} from 'es-module-loader/core/loader-polyfill';
 import convertRange from 'sver/convert-range';
-import SystemJS from 'systemjs';
 
-import { createCssLoader } from './cssLoader';
-import { createEsmCdnLoader, dynamicImport } from './esmLoader';
-import { createLocalLoader } from './localLoader';
-import { addSyntheticDefaultExports } from './syntheticImports';
-import { createSystemLoader } from './systemLoader';
-import { createTranspiler } from './transpiler';
+import { transpileCss } from './css';
+import { transpileJs } from './javascript';
 
-const ESM_CDN_URL = 'https://dev.jspm.io';
-const SYSTEM_CDN_URL = 'https://system-dev.jspm.io';
-const LESS_VERSION = '2.7';
-const TYPESCRIPT_VERSION = '2.8';
+export type SourceFile = SourceFileRecord | string;
 
-declare global {
-    interface Window {
-        PLNKR_RUNTIME_USE_SYSTEM: boolean;
+export interface SourceFileRecord {
+    filename: string;
+    source: string;
+    sourceMap?: string;
+}
+
+export interface RuntimeHost {
+    getFileContents(key: string): SourceFile | PromiseLike<SourceFile>;
+    getCanonicalPath?(key: string): string | PromiseLike<string>;
+    resolveBareDependency?(key: string): string | PromiseLike<string>;
+}
+
+export interface RuntimeOptions {
+    defaultDependencyVersions?: { [key: string]: string };
+    host: RuntimeHost;
+    useSystem?: boolean;
+}
+
+export interface AfterUnloadEvent {
+    propagationStopped: boolean;
+    stopPropagation(): void;
+}
+
+export interface ReplaceEvent {
+    previousInstance: RuntimeModuleNamespace;
+}
+
+const CDN_ESM_URL = 'https://dev.jspm.io';
+const CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
+const DEFAULT_DEPENDENCY_VERSIONS = {
+    less: '2.7',
+};
+const EMPTY_MODULE = new ModuleNamespace({});
+const NPM_MODULE_RX = /^((?:@[^/]+\/)?[^/]+)(\/.*)?$/;
+
+// From SystemJS: https://github.com/systemjs/systemjs/blob/501d1a0b9e32e00d54c9cd747e3236a9df88a1a3/src/instantiate.js#L418
+const LEADING_COMMENT_AND_META_RX = /^(\s*\/\*[^*]*(\*(?!\/)[^*]*)*\*\/|\s*\/\/[^\n]*|\s*"[^"]+"\s*;?|\s*'[^']+'\s*;?)*\s*/;
+function detectRegisterFormat(source: string): boolean {
+    const leadingCommentAndMeta = source.match(LEADING_COMMENT_AND_META_RX);
+    if (!leadingCommentAndMeta) return false;
+    var codeStart = leadingCommentAndMeta[0].length;
+    return (
+        source.startsWith('System.register', codeStart) ||
+        source.startsWith('SystemJS.register', codeStart)
+    );
+}
+
+interface ModuleNamespaceClass {
+    new (baseObject: any): ModuleNamespace;
+}
+
+export class RuntimeModuleNamespace extends ModuleNamespace {
+    constructor(baseObject: any) {
+        if (
+            baseObject instanceof Object &&
+            !baseObject.__useDefault &&
+            'default' in baseObject &&
+            Object.keys(baseObject).length <= 1
+        ) {
+            if (typeof baseObject.default === 'function') {
+                if (typeof Symbol !== 'undefined') {
+                    Object.defineProperty(baseObject.default, toStringTag, {
+                        value: 'Module',
+                    });
+                }
+
+                return baseObject.default;
+            }
+
+            Object.keys(baseObject.default).forEach(key => {
+                Object.defineProperty(baseObject, key, {
+                    enumerable: true,
+                    get: function() {
+                        return baseObject.default[key];
+                    },
+                });
+            });
+        }
+
+        super(baseObject);
     }
 }
 
-export type IModuleExports = any;
-
-export interface IRuntimeHost {
-    fallbackToSystemFetch?: boolean;
-    getFileContents(
-        pathname: string
-    ): string | Promise<string> | undefined | Promise<undefined>;
-    transpile?(load: ISystemModule): string | Promise<string>;
+if (toStringTag) {
+    Object.defineProperty(RuntimeModuleNamespace.prototype, toStringTag, {
+        value: 'Module',
+    });
 }
 
-export interface IRuntimeOptions {
-    defaultDependencies?: { [name: string]: string };
-    defaultExtensions?: string[];
-    processModule?: string;
-    runtimeHost: IRuntimeHost;
-    system?: SystemJSLoader.System;
-    transpiler?: ISystemPlugin | false;
-}
-
-export interface ISystemModule {
-    name: string;
-    address: string;
-    source?: string;
-    metadata?: any;
-}
-
-export interface ISystemPlugin {
-    fetch?(
-        this: SystemJSLoader.System,
-        load: ISystemModule,
-        systemFetch: (load: ISystemModule) => string | Promise<string>
-    ): string | Promise<string>;
-    instantiate?(
-        this: SystemJSLoader.System,
-        load: ISystemModule,
-        systemInstantiate: (load: ISystemModule) => object | Promise<object>
-    ): void | object | Promise<void | object>;
-    locate?(
-        this: SystemJSLoader.System,
-        load: ISystemModule
-    ): string | Promise<string>;
-    translate?(
-        this: SystemJSLoader.System,
-        load: ISystemModule
-    ): string | Promise<string>;
-}
-
-export interface IRuntime {
-    import(entrypointPath: string): Promise<IModuleExports>;
-}
-
-export class Runtime implements IRuntime {
-    private defaultDependencies: { [name: string]: string };
-    // private defaultExtensions: string[];
-    private esmLoader: ISystemPlugin;
-    private localLoader: ISystemPlugin;
-    private localRoot: string;
+export class Runtime extends RegisterLoader {
+    private readonly baseUri: string;
+    private readonly cachedResolves: Map<string, string>;
+    private readonly cachedResolvesRev: Map<string, string>;
+    private readonly dependencies: Map<string, Set<string>>;
+    private readonly dependents: Map<string, Set<string>>;
     private queue: Promise<any>;
-    // private runtimeHost: IRuntimeHost;
-    private system: SystemJSLoader.System;
-    private systemLoader: ISystemPlugin;
-    private transpiler: ISystemPlugin;
-    private useEsm: boolean;
+
+    public readonly defaultDependencyVersions: { [key: string]: string };
+    public readonly host: RuntimeHost;
+    public readonly useSystem: boolean;
+    public [RegisterLoader.moduleNamespace]: ModuleNamespaceClass;
 
     constructor({
-        defaultDependencies = {},
-        defaultExtensions = ['.js', '.ts', '.jsx', '.tsx'],
-        runtimeHost,
-        transpiler,
-    }: IRuntimeOptions) {
-        const cssLoader = createCssLoader({
-            runtime: this,
-        });
+        defaultDependencyVersions = {},
+        host,
+        useSystem = !!((window || global) as any)['PLNKR_RUNTIME_USE_SYSTEM'],
+    }: RuntimeOptions) {
+        super(document.baseURI);
 
-        this.defaultDependencies = defaultDependencies;
-        // this.defaultExtensions = defaultExtensions;
-        this.esmLoader = createEsmCdnLoader({ cssLoader });
-        this.localLoader = createLocalLoader({
-            cssLoader,
-            defaultExtensions,
-            runtimeHost,
-        });
-        this.systemLoader = createSystemLoader();
-        this.queue = Promise.resolve();
-        // this.runtimeHost = runtimeHost;
-        this.system = new SystemJS.constructor();
-        // Hack to force system to never use node's require
-        this.system._nodeRequire = null;
-        this.localRoot = this.system.baseURL.replace(
-            /^([a-zA-Z]+:\/\/)([^/]*)\/.*$/,
-            '$1$2'
-        );
-        this.transpiler =
-            transpiler === false
-                ? null
-                : transpiler ||
-                  createTranspiler({
-                      createRuntime,
-                      runtime: this,
-                      runtimeHost,
-                      typescriptVersion: TYPESCRIPT_VERSION,
-                  });
-        this.useEsm =
-            !window.PLNKR_RUNTIME_USE_SYSTEM &&
-            typeof dynamicImport === 'function';
+        this.baseUri = document.baseURI.endsWith('/')
+            ? document.baseURI
+            : `${document.baseURI}/`;
+        this.cachedResolves = new Map();
+        this.cachedResolvesRev = new Map();
+        this.useSystem = useSystem;
 
-        this.system.registry.set(
-            '@runtime-loader-css',
-            this.system.newModule(cssLoader)
-        );
-        this.system.registry.set(
-            '@runtime-loader-esm',
-            this.system.newModule(this.esmLoader)
-        );
-        this.system.registry.set(
-            '@runtime-loader-local',
-            this.system.newModule(this.localLoader)
-        );
-        this.system.registry.set(
-            '@runtime-loader-system',
-            this.system.newModule(this.systemLoader)
-        );
-        if (this.transpiler) {
-            this.system.registry.set(
-                '@runtime-transpiler',
-                this.system.newModule(this.transpiler)
+        if (!host) {
+            throw new TypeError('The options.host property is required');
+        }
+
+        if (
+            host.getCanonicalPath &&
+            typeof host.getCanonicalPath !== 'function'
+        ) {
+            throw new TypeError(
+                'The options.host.getCanonicalPath property, if specified, must be a function'
             );
         }
 
-        if (this.localRoot.charAt(this.localRoot.length - 1) === '/') {
-            this.localRoot = this.localRoot.slice(0, this.localRoot.length - 1);
-        }
+        this[RegisterLoader.moduleNamespace] = RuntimeModuleNamespace;
 
-        if (!this.defaultDependencies['typescript']) {
-            this.defaultDependencies['typescript'] = TYPESCRIPT_VERSION;
-        }
+        this.host = host;
+        this.queue = Promise.resolve();
 
-        if (!this.defaultDependencies['less']) {
-            this.defaultDependencies['less'] = LESS_VERSION;
-        }
-
-        type declareType = (...modules: any[]) => any;
-
-        const systemRegister = this.system.register;
-
-        this.system.register = function(
-            key: string | string[],
-            deps: string[] | declareType,
-            declare?: declareType
-        ) {
-            if (typeof key !== 'string') {
-                if (typeof deps === 'function') declare = deps;
-                deps = key;
-                key = undefined;
-            }
-            var registerDeclare = declare;
-            declare = function(_export, _context) {
-                return registerDeclare.call(
-                    this,
-                    function(
-                        name: string | { [key: string]: any },
-                        value: { [key: string]: any }
-                    ) {
-                        if (typeof name === 'object') {
-                            if (typeof name['default'] === 'object') {
-                                return _export(
-                                    addSyntheticDefaultExports(name['default'])
-                                );
-                            }
-
-                            return _export(addSyntheticDefaultExports(name));
-                        } else if (
-                            name === 'default' &&
-                            typeof value === 'object'
-                        ) {
-                            return _export(addSyntheticDefaultExports(value));
-                        }
-                        return _export(name, value);
-                    },
-                    _context
-                );
-            };
-            if (key) return systemRegister.call(this, key, deps, declare);
-            else return systemRegister.call(this, deps, declare);
+        this.defaultDependencyVersions = {
+            ...DEFAULT_DEPENDENCY_VERSIONS,
+            ...defaultDependencyVersions,
         };
 
-        this.system.config({
-            meta: {
-                [`${this.localRoot}/*`]: {
-                    // @ts-ignore
-                    esModule: true,
-                    loader: '@runtime-loader-local',
-                },
-                '*.css': {
-                    loader: '@runtime-loader-css',
-                },
-                '*.less': {
-                    loader: '@runtime-loader-css',
-                },
-                [`${ESM_CDN_URL}/*`]: {
-                    // @ts-ignore
-                    esModule: true,
-                    loader: '@runtime-loader-esm',
-                },
-                [`${SYSTEM_CDN_URL}/*`]: {
-                    // @ts-ignore
-                    esModule: true,
-                    loader: '@runtime-loader-system',
-                },
-            },
-            transpiler: this.transpiler ? '@runtime-transpiler' : false,
-        });
-        this.system.trace = true;
+        this.dependencies = new Map();
+        this.dependents = new Map();
     }
 
-    public import(entrypointPath: string): Promise<IModuleExports> {
-        const importPromise = this.queue.then(() =>
-            this.buildConfig()
-                .then(config => {
-                    this.system.config(config);
+    [RegisterLoader.traceLoad](load: LoadRecord) {
+        const instance = this.registry.get(load.key);
+        const previousInstance = this.registry.get(`${load.key}@prev`);
 
-                    return this.system
-                        .import(entrypointPath)
-                        .catch(err => Promise.reject(err.originalErr));
-                })
-                .then(addSyntheticDefaultExports)
+        if (
+            instance &&
+            previousInstance &&
+            typeof previousInstance.__onReplace === 'function'
+        ) {
+            const event: ReplaceEvent = {
+                previousInstance,
+            };
+
+            previousInstance.__onReplace(event);
+        }
+    }
+
+    [RegisterLoader.traceResolvedStaticDependency](
+        parentKey: string,
+        _: string,
+        resolvedKey: string
+    ) {
+        if (!this.dependencies.has(parentKey)) {
+            this.dependencies.set(parentKey, new Set());
+        }
+
+        this.dependencies.get(parentKey).add(resolvedKey);
+
+        if (!this.dependents.has(resolvedKey)) {
+            this.dependents.set(resolvedKey, new Set());
+        }
+
+        this.dependents.get(resolvedKey).add(parentKey);
+    }
+
+    [RegisterLoader.resolve](key: string, parentKey?: string) {
+        const urlResult = super[RegisterLoader.resolve](key, parentKey);
+
+        return Promise.resolve(urlResult).then(url => {
+            if (url) {
+                if (!url.startsWith(this.baseUri)) {
+                    return url;
+                }
+
+                const hostRequest = url.slice(this.baseUri.length);
+                const hostResolveResult = hostResolve(this.host, hostRequest);
+
+                return Promise.resolve(hostResolveResult).then(
+                    (hostResolution: string) => {
+                        if (typeof hostResolution !== 'string') {
+                            return <Promise<string>>(
+                                Promise.reject(
+                                    new Error(
+                                        `Failed to resolve host module '${hostRequest}'`
+                                    )
+                                )
+                            );
+                        }
+
+                        return `${this.baseUri}${hostResolution}`;
+                    }
+                );
+            }
+
+            const matches = key.match(NPM_MODULE_RX);
+            const moduleName = (matches && matches[1]) || key;
+            const modulePath = (matches && matches[2]) || '';
+
+            return this.import('./package.json')
+                .catch(() => ({}))
+                .then(packageJson => {
+                    const devDependencies =
+                        (packageJson && packageJson.devDependencies) || {};
+                    const dependencies =
+                        (packageJson && packageJson.dependencies) || {};
+                    const range =
+                        dependencies[moduleName] ||
+                        devDependencies[moduleName] ||
+                        this.defaultDependencyVersions[moduleName];
+                    const spec = range ? createJspmRange(range) : '';
+
+                    return dynamicImport && !this.useSystem
+                        ? `${CDN_ESM_URL}/${moduleName}${spec}${modulePath}`
+                        : `${CDN_SYSTEM_URL}/${moduleName}${spec}${modulePath}`;
+                });
+        });
+    }
+
+    [RegisterLoader.instantiate](
+        key: string,
+        processAnonRegister: ProcessAnonRegister
+    ): Promise<ModuleNamespace | void> {
+        if (key.startsWith(this.baseUri)) {
+            const loadHostResult = loadHostModule(
+                this,
+                key.slice(this.baseUri.length),
+                processAnonRegister
+            );
+
+            return Promise.resolve(loadHostResult);
+        }
+
+        const loadRemoteResult = loadRemoteModule(
+            this,
+            key,
+            processAnonRegister
         );
 
-        // this.queue = importPromise.catch(() => undefined);
-
-        return importPromise;
+        return Promise.resolve(loadRemoteResult);
     }
 
     public invalidate(...pathnames: string[]): Promise<void> {
-        type DependentName = string;
-
-        const dependentGraph: Map<
-            DependentName,
-            Set<DependentName>
-        > = new Map();
-        const getDependents = (
-            normalizedPath: DependentName
-        ): DependentName[] => {
-            if (dependentGraph.size !== Object.keys(this.system.loads).length) {
-                dependentGraph.clear();
-
-                for (const key in this.system.loads) {
-                    const loadEntry = this.system.loads[key];
-
-                    for (const mapping in loadEntry.depMap) {
-                        const dependency = loadEntry.depMap[mapping];
-
-                        if (!dependentGraph.has(dependency)) {
-                            dependentGraph.set(dependency, new Set());
-                        }
-
-                        dependentGraph.get(dependency).add(key);
-                    }
-                }
-            }
-
-            if (dependentGraph.has(normalizedPath)) {
-                return Array.from(dependentGraph.get(normalizedPath));
-            }
-
-            const normalizedPathWithoutExt = normalizedPath.replace(
-                /\.[^.]+$/,
-                ''
-            );
-
-            if (dependentGraph.has(normalizedPathWithoutExt)) {
-                return Array.from(dependentGraph.get(normalizedPathWithoutExt));
+        const getDependents = (normalizedPath: string): string[] => {
+            if (this.dependents.has(normalizedPath)) {
+                return Array.from(this.dependents.get(normalizedPath));
             }
 
             return [];
         };
-        const normalizedPaths = new Map();
-        const normalizePath = (key: string): Promise<string> => {
-            if (normalizedPaths.has(key)) {
-                return Promise.resolve(normalizedPaths.get(key));
-            }
 
-            return this.system.resolve(key).then(resolvedPath => {
-                normalizedPaths.set(key, resolvedPath);
-
-                return resolvedPath;
-            });
-        };
         const seen = new Set();
-
         const invalidationPromise = this.queue.then(() => {
-            const invalidations = pathnames.slice();
+            const invalidations = [...pathnames];
             const handleNextInvalidation = (): Promise<any> => {
                 if (!invalidations.length) return Promise.resolve();
 
                 const pathname = invalidations.shift();
 
-                return normalizePath(pathname).then(resolvedPathname => {
+                return this.resolve(pathname).then(resolvedPathname => {
                     if (!seen.has(resolvedPathname)) {
                         seen.add(resolvedPathname);
 
-                        this.system.registry.delete(resolvedPathname);
-                        this.system.registry.delete(
-                            resolvedPathname.replace(/\.[^.]+$/, '')
-                        );
-
                         const dependents = getDependents(resolvedPathname);
+                        const instance = this.registry.get(resolvedPathname);
+                        const event: AfterUnloadEvent = {
+                            propagationStopped: false,
+                            stopPropagation() {
+                                this.defaultPrevented = true;
+                            },
+                        };
 
-                        for (const dependent of dependents) {
-                            invalidations.push(dependent);
+                        if (
+                            instance &&
+                            typeof instance.__onAfterUnload === 'function'
+                        ) {
+                            instance.__onAfterUnload(event);
+                        }
+
+                        this.registry.delete(resolvedPathname);
+                        this.dependencies.delete(resolvedPathname);
+                        this.dependents.delete(resolvedPathname);
+
+                        if (!event.propagationStopped) {
+                            for (const dependent of dependents) {
+                                invalidations.push(dependent);
+                            }
                         }
                     }
 
@@ -339,40 +323,186 @@ export class Runtime implements IRuntime {
             return handleNextInvalidation();
         });
 
-        this.queue = this.queue.catch(() => undefined);
+        this.queue = invalidationPromise.catch(() => undefined);
 
         return invalidationPromise;
     }
+}
 
-    public buildConfig(): Promise<SystemJSLoader.Config> {
-        const config = this.system.getConfig();
-        const dependencies = this.defaultDependencies;
+type DynamicImport = (spec: string) => Promise<any>;
 
-        config.map = {};
+const dynamicImport = <DynamicImport>(() => {
+    try {
+        return new Function('spec', 'return import(spec)');
+    } catch (__) {
+        return null;
+    }
+})();
 
-        return this.system
-            .import('./package.json')
-            .catch(() => ({}))
-            .then(pkgJson => {
-                Object.assign(dependencies, pkgJson.devDependencies || {});
-                Object.assign(dependencies, pkgJson.dependencies || {});
+function hostResolve(
+    host: RuntimeHost,
+    key: string
+): string | PromiseLike<string> {
+    if (typeof host.getCanonicalPath === 'function') {
+        return host.getCanonicalPath(key);
+    }
 
-                const baseUrl = this.useEsm ? ESM_CDN_URL : SYSTEM_CDN_URL;
+    return key;
+}
 
-                for (const name in dependencies) {
-                    const range = dependencies[name];
-                    const pkgId = `${baseUrl}/${name}${createJspmRange(range)}`;
+const EXT_RX = /(\.[^./]+)$/;
+function getExt(filename: string) {
+    const matches = filename.match(EXT_RX);
 
-                    config.map[name] = pkgId;
+    return matches ? matches[1] : '';
+}
+
+function instantiate(
+    runtime: Runtime,
+    key: string,
+    code: string,
+    processAnonRegister: ProcessAnonRegister
+): Promise<ModuleNamespace | void> | ModuleNamespace | void {
+    const ext = getExt(key);
+
+    switch (ext) {
+        case '.json':
+            return instantiateJson(runtime, key, code);
+        case '.css':
+        case '.less':
+            return instantiateCss(runtime, key, code, processAnonRegister);
+        default:
+            return instantiateJavascript(
+                runtime,
+                key,
+                code,
+                processAnonRegister
+            );
+    }
+}
+
+function instantiateCss(
+    runtime: Runtime,
+    key: string,
+    code: string,
+    processAnonRegister: ProcessAnonRegister
+): Promise<ModuleNamespace | void> {
+    const transpileResult = transpileCss(runtime, key, code);
+
+    return Promise.resolve(transpileResult).then(transpiledCode => {
+        return instantiateJavascript(
+            runtime,
+            key,
+            transpiledCode,
+            processAnonRegister
+        );
+    });
+}
+
+function instantiateJson(
+    runtime: Runtime,
+    _: string,
+    code: string
+): ModuleNamespace {
+    return new runtime[RegisterLoader.moduleNamespace](JSON.parse(code));
+}
+
+function instantiateJavascript(
+    runtime: Runtime,
+    key: string,
+    code: string,
+    processAnonRegister: ProcessAnonRegister
+): Promise<ModuleNamespace | void> | ModuleNamespace | void {
+    const systemRegisterCodeResult = detectRegisterFormat(code)
+        ? code
+        : transpileJs(runtime, key, code);
+
+    return Promise.resolve(systemRegisterCodeResult).then(code => {
+        const moduleFactory = new Function('System', 'SystemJS', code);
+
+        moduleFactory(runtime, runtime);
+
+        if (!processAnonRegister()) {
+            return EMPTY_MODULE;
+        }
+    });
+}
+
+function loadRemoteModule(
+    runtime: Runtime,
+    key: string,
+    processAnonRegister: ProcessAnonRegister
+): Promise<ModuleNamespace | void> {
+    if (typeof dynamicImport === 'function' && !runtime.useSystem) {
+        const dynamicImportResult = dynamicImport(key);
+
+        return Promise.resolve(dynamicImportResult).then(esModule => {
+            const moduleNamespaceConstructor =
+                runtime[RegisterLoader.moduleNamespace];
+            // const baseObject =
+            //     Object.keys(moduleExports).length <= 1 &&
+            //     'default' in moduleExports
+            //         ? moduleExports.default
+            //         : moduleExports;
+
+            if (esModule.default) {
+                const baseObject = esModule.default;
+                const descriptors = Object.getOwnPropertyDescriptors(
+                    esModule.default
+                );
+
+                Object.defineProperty(baseObject, '__esModule', {
+                    value: true,
+                });
+
+                Object.defineProperty(baseObject, '__useDefault', {
+                    value: esModule.default,
+                });
+
+                Object.defineProperty(baseObject, 'default', {
+                    enumerable: true,
+                    get() {
+                        return esModule.default;
+                    },
+                });
+
+                Object.defineProperties(baseObject, descriptors);
+
+                if (toStringTag) {
+                    Object.defineProperty(baseObject, toStringTag, {
+                        value: 'Module',
+                    });
                 }
 
-                return config;
-            });
+                return baseObject;
+            }
+
+            return new moduleNamespaceConstructor(esModule);
+        });
     }
 
-    public resolve(spec: string): Promise<string> {
-        return this.system.resolve(spec);
-    }
+    return fetch(key)
+        .then(res => res.text())
+        .then(code => instantiate(runtime, key, code, processAnonRegister));
+}
+
+function loadHostModule(
+    runtime: Runtime,
+    key: string,
+    processAnonRegister: ProcessAnonRegister
+): Promise<ModuleNamespace | void> {
+    const codeResult = runtime.host.getFileContents(key);
+
+    return Promise.resolve(codeResult).then(code => {
+        if (typeof code !== 'string') {
+            return Promise.reject(
+                new Error(
+                    `The runtime host returned non-string file contents for '${key}'`
+                )
+            );
+        }
+        return instantiate(runtime, key, code, processAnonRegister);
+    });
 }
 
 function createJspmRange(semverRange: string): string {
@@ -384,8 +514,4 @@ function createJspmRange(semverRange: string): string {
     else if (range.isMajor) versionString = '@' + range.version.major;
 
     return versionString;
-}
-
-function createRuntime(options: IRuntimeOptions): IRuntime {
-    return new Runtime(options);
 }
