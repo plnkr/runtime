@@ -104,3 +104,10 @@ Return the canonical path or a `Promise` that resolves for a given 'local' resou
 Return the contents of the file (or a `Promise` thereof) whose canonical path is `key`.
 
 > Note: This interface will be called to resolve bare module versions with `package.json` as the `key`. If you want to control the versions of bare modules (npm modules), then a mock `package.json` can be returned here that defined the `dependencies` for the bare modules whose versions are important to you.
+
+## Thank you
+
+This project was made possible by:
+
+-   All the hard work by the collaborators of [`es-module-loader`](https://github.com/ModuleLoader/es-module-loader).
+-   [Guy Bedford](https://twitter.com/GuyBedford) and his [jspm](https://jspm.io) project and its 'magic' ES Module and `System.register` CDNs, `dev.jspm.io` and `system-dev.jspm.io`, respectively.
