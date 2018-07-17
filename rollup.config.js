@@ -17,7 +17,7 @@ module.exports = [
         output: {
             file: Package['main'],
             format: 'umd',
-            name: Package['name'],
+            name: 'PlnkrRuntime',
             sourcemap: true,
         },
         plugins: [
@@ -46,7 +46,7 @@ module.exports = [
         output: {
             file: Package['module'],
             format: 'es',
-            name: Package['name'],
+            name: 'PlnkrRuntime',
             sourcemap: true,
         },
         plugins: [

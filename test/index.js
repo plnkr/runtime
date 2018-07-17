@@ -48,7 +48,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
         const result = await page.evaluate(function(useSystem) {
             window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
 
-            return new window['@plnkr/runtime'].Runtime({
+            return new window['PlnkrRuntime'].Runtime({
                 host: {
                     getFileContents() {},
                 },
@@ -67,7 +67,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
         const result = await page.evaluate(async function(useSystem) {
             window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
 
-            const runtime = new window['@plnkr/runtime'].Runtime({
+            const runtime = new window['PlnkrRuntime'].Runtime({
                 host: {
                     getFileContents() {},
                 },
@@ -90,7 +90,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
         const result = await page.evaluate(async function(useSystem) {
             window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
 
-            const runtime = new window['@plnkr/runtime'].Runtime({
+            const runtime = new window['PlnkrRuntime'].Runtime({
                 host: {
                     getFileContents(pathname) {
                         if (pathname === 'package.json')
@@ -99,6 +99,38 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                                     lodash: '3.x',
                                 },
                             });
+
+                        throw new Error('Not found');
+                    },
+                },
+            });
+
+            const _ = await runtime.import('lodash');
+
+            return _.VERSION;
+        }, useSystem);
+
+        expect(result).to.be.a.string();
+        expect(result).to.match(/^3\.\d+\.\d+/);
+    });
+
+    it('will load lodash@3 and return its VERSION property using a custom bare dependency resolver', async () => {
+        const content = await runtimeCode;
+        const page = await browser.newPage();
+
+        await page.addScriptTag({ content });
+
+        const result = await page.evaluate(async function(useSystem) {
+            window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
+
+            const cdnUrl = useSystem
+                ? window['PlnkrRuntime'].CDN_SYSTEM_URL
+                : window['PlnkrRuntime'].CDN_ESM_URL;
+
+            const runtime = new window['PlnkrRuntime'].Runtime({
+                host: {
+                    resolveBareDependency(key) {
+                        if (key === 'lodash') return `${cdnUrl}/${key}@3`;
                     },
                 },
             });
@@ -146,7 +178,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                     export const markup = renderToString(<Hello name="World"></Hello>);
                 `,
             };
-            const runtime = new window['@plnkr/runtime'].Runtime({
+            const runtime = new window['PlnkrRuntime'].Runtime({
                 host: {
                     getCanonicalPath(pathname) {
                         switch (pathname) {
@@ -155,10 +187,14 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                             case 'index':
                                 return 'index.js';
                         }
-                        return pathname;
+                        return files[pathname]
+                            ? pathname
+                            : Promise.reject(new Error('Not found'));
                     },
                     getFileContents(pathname) {
-                        return files[pathname];
+                        return files[pathname]
+                            ? files[pathname]
+                            : Promise.reject(new Error('Not found'));
                     },
                 },
             });
@@ -196,7 +232,7 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                     export const index = Date.now();
                 `,
             };
-            const runtime = new window['@plnkr/runtime'].Runtime({
+            const runtime = new window['PlnkrRuntime'].Runtime({
                 host: {
                     getCanonicalPath(pathname) {
                         switch (pathname) {
@@ -205,10 +241,14 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                             case 'index':
                                 return 'index.js';
                         }
-                        return pathname;
+                        return files[pathname]
+                            ? pathname
+                            : Promise.reject(new Error('Not found'));
                     },
                     getFileContents(pathname) {
-                        return files[pathname];
+                        return files[pathname]
+                            ? files[pathname]
+                            : Promise.reject(new Error('Not found'));
                     },
                 },
             });
@@ -245,10 +285,12 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                     export { element, markup } from './style.css';
                 `,
             };
-            const runtime = new window['@plnkr/runtime'].Runtime({
+            const runtime = new window['PlnkrRuntime'].Runtime({
                 host: {
                     getFileContents(pathname) {
-                        return files[pathname];
+                        return files[pathname]
+                            ? files[pathname]
+                            : Promise.reject(new Error('Not found'));
                     },
                 },
             });
@@ -270,9 +312,6 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
         const content = await runtimeCode;
         const page = await browser.newPage();
 
-        // page.on('console', e => console.log(e.text()));
-        // page.on('pageerror', e => console.trace(e.originalErr || e));
-
         await page.addScriptTag({ content });
 
         const result = await page.evaluate(async function(useSystem) {
@@ -284,10 +323,12 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
                     export { element, markup } from './style.less';
                 `,
             };
-            const runtime = new window['@plnkr/runtime'].Runtime({
+            const runtime = new window['PlnkrRuntime'].Runtime({
                 host: {
                     getFileContents(pathname) {
-                        return files[pathname];
+                        return files[pathname]
+                            ? files[pathname]
+                            : Promise.reject(new Error('Not found'));
                     },
                 },
             });

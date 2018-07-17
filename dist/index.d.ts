@@ -1,7 +1,12 @@
-import RegisterLoader from 'es-module-loader/core/register-loader';
+import RegisterLoader, { LoadRecord } from 'es-module-loader/core/register-loader';
 import { ModuleNamespace, ProcessAnonRegister } from 'es-module-loader/core/loader-polyfill';
+export declare type SourceFile = SourceFileRecord | string;
+export interface SourceFileRecord {
+    source: string;
+    sourceMap?: object;
+}
 export interface RuntimeHost {
-    getFileContents(key: string): string | PromiseLike<string>;
+    getFileContents(key: string): SourceFile | PromiseLike<SourceFile>;
     getCanonicalPath?(key: string): string | PromiseLike<string>;
     resolveBareDependency?(key: string): string | PromiseLike<string>;
 }
@@ -13,9 +18,14 @@ export interface RuntimeOptions {
     useSystem?: boolean;
 }
 export interface AfterUnloadEvent {
-    defaultPrevented: boolean;
-    preventDefault(): void;
+    propagationStopped: boolean;
+    stopPropagation(): void;
 }
+export interface ReplaceEvent {
+    previousInstance: RuntimeModuleNamespace;
+}
+export declare const CDN_ESM_URL = "https://dev.jspm.io";
+export declare const CDN_SYSTEM_URL = "https://system-dev.jspm.io";
 interface ModuleNamespaceClass {
     new (baseObject: any): ModuleNamespace;
 }
@@ -25,8 +35,8 @@ export declare class RuntimeModuleNamespace extends ModuleNamespace {
 export declare class Runtime extends RegisterLoader {
     private readonly dependencies;
     private readonly dependents;
-    private readonly baseUri;
     private queue;
+    readonly baseUri: string;
     readonly defaultDependencyVersions: {
         [key: string]: string;
     };
@@ -34,9 +44,11 @@ export declare class Runtime extends RegisterLoader {
     readonly useSystem: boolean;
     [RegisterLoader.moduleNamespace]: ModuleNamespaceClass;
     constructor({ defaultDependencyVersions, host, useSystem, }: RuntimeOptions);
-    [RegisterLoader.traceResolvedStaticDependency](parentKey: string, _: string, resolvedKey: string): void;
+    [RegisterLoader.traceLoad](load: LoadRecord): void;
+    [RegisterLoader.traceResolvedStaticDependency](parentKey: string, _: string, key: string): void;
     [RegisterLoader.resolve](key: string, parentKey?: string): Promise<string>;
     [RegisterLoader.instantiate](key: string, processAnonRegister: ProcessAnonRegister): Promise<ModuleNamespace | void>;
     invalidate(...pathnames: string[]): Promise<void>;
+    registerDependency(parentKey: string, key: string): void;
 }
 export {};

@@ -1,109 +1,136 @@
 import * as ts from 'typescript';
 
-import { Runtime } from '.';
-
-const transpilerInstances = new WeakMap<
-    [
-        {
-            compilerOptions?: ts.CompilerOptions;
-        },
-        typeof ts
-    ],
-    RuntimeCompilerHost
->();
+import { Runtime, SourceFile, SourceFileRecord } from '.';
 
 export function transpileJs(
     runtime: Runtime,
     key: string,
     code: string
-): Promise<string> {
+): Promise<SourceFile> {
     const configFileName =
         key.endsWith('.js') || key.endsWith('.jsx')
             ? './jsconfig.json'
             : './tsconfig.json';
-    const configFileResult: Promise<{
-        compilerOptions?: ts.CompilerOptions;
-    }> = runtime
-        .import(configFileName, key)
+
+    return runtime
+        .resolve(configFileName)
         .catch(() => null)
-        .then(data => data || {});
-    const typescriptResult: Promise<typeof ts> = runtime.import(
-        'typescript',
-        key
-    );
-
-    return Promise.all([configFileResult, typescriptResult]).then(args => {
-        const [config, typescript] = args;
-
-        if (!transpilerInstances.has(args)) {
-            transpilerInstances.set(args, new RuntimeCompilerHost(typescript));
-        }
-
-        const host = transpilerInstances.get(args);
-        const file = host.addFile(key, code, typescript.ScriptTarget.ES5);
-
-        if (!file.output) {
-            const compilerOptions: ts.CompilerOptions = {
-                allowJs: true,
-                jsx: typescript.JsxEmit.React,
-                ...(config.compilerOptions || {}),
-                allowNonTsExtensions: true,
-                allowSyntheticDefaultImports: true,
-                esModuleInterop: true,
-                isolatedModules: true,
-                lib: null,
-                module: typescript.ModuleKind.System,
-                noLib: true,
-                suppressOutputPathCheck: true,
-            };
-            const program = typescript.createProgram(
-                [key],
-                compilerOptions,
-                host
+        .then(resolvedConfigFileName => {
+            const configFileResult: Promise<{
+                compilerOptions?: ts.CompilerOptions;
+            }> =
+                typeof resolvedConfigFileName === 'string'
+                    ? runtime
+                          .import(resolvedConfigFileName)
+                          .catch(() => null)
+                          .then(data => data || {})
+                    : Promise.resolve({});
+            const typescriptResult = <Promise<typeof ts>>(
+                runtime.import('typescript', key)
             );
 
-            let jstext: string = undefined;
-            let maptext: string = undefined;
+            return Promise.all([configFileResult, typescriptResult])
+                .then(args => {
+                    try {
+                        return transpileWithCustomHost(
+                            key,
+                            code,
+                            args[0],
+                            args[1]
+                        );
+                    } catch (error) {
+                        return <Promise<SourceFileRecord>>Promise.reject(error);
+                    }
+                })
+                .then(sourceFileRecord => {
+                    if (resolvedConfigFileName) {
+                        runtime.registerDependency(key, resolvedConfigFileName);
+                    }
 
-            // Emit
-            const emitResult = program.emit(undefined, (outputName, output) => {
-                if (outputName.endsWith('.map')) {
-                    maptext = output;
-                } else {
-                    jstext = output.slice(0, output.lastIndexOf('//#')); // remove sourceMappingURL
-                }
-            });
+                    return sourceFileRecord;
+                });
+        });
+}
 
-            const diagnostics = emitResult.diagnostics
-                .concat(program.getOptionsDiagnostics())
-                .concat(program.getSyntacticDiagnostics());
+function transpileWithCustomHost(
+    key: string,
+    code: string,
+    config: {
+        compilerOptions?: ts.CompilerOptions;
+    },
+    typescript: typeof ts
+): SourceFileRecord {
+    const host = new RuntimeCompilerHost(typescript);
+    const file = host.addFile(key, code, typescript.ScriptTarget.ES5);
 
-            file.output = {
-                failure: diagnostics.some(
-                    diag =>
-                        diag.category === typescript.DiagnosticCategory.Error
-                ),
-                diags: diagnostics,
-                js: jstext,
-                sourceMap: maptext,
-            };
-        }
+    if (!file.output) {
+        const compilerOptions: ts.CompilerOptions = {
+            allowJs: true,
+            jsx: typescript.JsxEmit.React,
+            ...(config.compilerOptions || {}),
+            allowNonTsExtensions: true,
+            allowSyntheticDefaultImports: true,
+            esModuleInterop: true,
+            inlineSources: true,
+            isolatedModules: true,
+            lib: null,
+            module: typescript.ModuleKind.System,
+            noLib: true,
+            sourceMap: true,
+            suppressOutputPathCheck: true,
+        };
+        const program = typescript.createProgram([key], compilerOptions, host);
 
-        if (file.output.failure) {
-            const error = new Error(
-                `Compilation failed: ${file.output.diags.map(diag =>
-                    typescript.flattenDiagnosticMessageText(
-                        diag.messageText,
-                        '\n'
-                    )
-                )}`
-            );
+        let jstext: string = undefined;
+        let maptext: string = undefined;
 
-            throw error;
-        }
+        // Emit
+        const emitResult = program.emit(undefined, (outputName, output) => {
+            if (outputName.endsWith('.map')) {
+                maptext = output;
+            } else {
+                jstext = output.slice(0, output.lastIndexOf('//#')); // remove sourceMappingURL
+            }
+        });
 
-        return file.output.js;
-    });
+        const diagnostics = emitResult.diagnostics
+            .concat(program.getOptionsDiagnostics())
+            .concat(program.getSyntacticDiagnostics());
+
+        file.output = {
+            failure: diagnostics.some(
+                diag => diag.category === typescript.DiagnosticCategory.Error
+            ),
+            diags: diagnostics,
+            js: jstext,
+            sourceMap: maptext,
+        };
+    }
+
+    if (file.output.failure) {
+        const error = new Error(
+            `Compilation failed: ${file.output.diags.map(diag =>
+                typescript.flattenDiagnosticMessageText(diag.messageText, '\n')
+            )}`
+        );
+
+        throw error;
+    }
+
+    const record: SourceFileRecord = {
+        source: file.output.js,
+        sourceMap: tryParse(file.output.sourceMap),
+    };
+
+    return record;
+}
+
+function tryParse(sourceMap: string): object | null {
+    try {
+        return JSON.parse(sourceMap);
+    } catch (_) {
+        return null;
+    }
 }
 
 type TranspileResult = {
@@ -113,12 +140,12 @@ type TranspileResult = {
     sourceMap: string;
 };
 
-interface SourceFile extends ts.SourceFile {
+interface TypescriptSourceFile extends ts.SourceFile {
     output?: TranspileResult;
 }
 
 class RuntimeCompilerHost implements ts.CompilerHost {
-    private files: { [s: string]: SourceFile };
+    private files: { [s: string]: TypescriptSourceFile };
 
     constructor(private typescript: typeof ts) {
         this.files = {};
@@ -158,12 +185,12 @@ class RuntimeCompilerHost implements ts.CompilerHost {
         throw new Error('Not implemented');
     }
 
-    public getSourceFile(fileName: string): SourceFile {
+    public getSourceFile(fileName: string): TypescriptSourceFile {
         fileName = this.getCanonicalFileName(fileName);
         return this.files[fileName];
     }
 
-    public getAllFiles(): SourceFile[] {
+    public getAllFiles(): TypescriptSourceFile[] {
         return Object.keys(this.files).map(key => this.files[key]);
     }
 
@@ -179,7 +206,7 @@ class RuntimeCompilerHost implements ts.CompilerHost {
         fileName: string,
         text: string,
         target: ts.ScriptTarget
-    ): SourceFile {
+    ): TypescriptSourceFile {
         fileName = this.getCanonicalFileName(fileName);
         const file = this.files[fileName];
 

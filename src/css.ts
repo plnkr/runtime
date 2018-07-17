@@ -1,55 +1,129 @@
+import escapeString from 'js-string-escape';
 import Less from 'less';
-import MagicString from 'magic-string';
+import * as SourceMap from 'source-map';
 
-import { ReplaceEvent, Runtime } from '.';
+import { ReplaceEvent, Runtime, SourceFileRecord } from '.';
 
 interface ExportFunction {
     (name: string, value: any): void;
 }
 
-function createRegisterFunction(code: string): string {
-    const ms = new MagicString(code);
+function createRegisterFunction(node: SourceMap.SourceNode): SourceFileRecord {
+    const queue: {
+        parent: SourceMap.SourceNode;
+        node: string | SourceMap.SourceNode;
+        i: number;
+    }[] = node.children.map((child, i) => ({ parent: node, node: child, i }));
 
-    ms.overwrite(0, ms.length(), JSON.stringify(code));
+    while (queue.length) {
+        const { parent, node, i } = queue.shift();
 
-    ms.prepend(`System.register([], ${registerTemplateParts[0]}`);
-    ms.append(`${registerTemplateParts[1]});`);
+        if (typeof node === 'string') {
+            parent.children[i] = <any>escapeString(node);
+            continue;
+        }
 
-    return ms.toString();
+        node.children.forEach((child, i) =>
+            queue.push({ parent: node, node: child, i })
+        );
+    }
+
+    node.prepend(`System.register([], ${registerTemplateParts[0]}"`);
+    node.add(`"${registerTemplateParts[1]});`);
+
+    const result = node.toStringWithSourceMap();
+
+    return {
+        source: result.code,
+        sourceMap: result.map.toJSON(),
+    };
 }
 
 export function transpileCss(
     runtime: Runtime,
     key: string,
     code: string
-): string | Promise<string> {
+): Promise<SourceFileRecord> {
     if (key.endsWith('.less')) {
         return transpileLess(runtime, key, code);
     }
 
-    return createRegisterFunction(code);
-}
+    return import('source-map').then((sourceMap: typeof SourceMap) => {
+        const node = new sourceMap.SourceNode(1, 0, key, code);
 
-interface LessBrowserFactory {
-    (window: Window, options: Less.Options): typeof Less;
+        return createRegisterFunction(node);
+    });
 }
 
 function transpileLess(
     runtime: Runtime,
     key: string,
     code: string
-): Promise<string> {
-    return runtime
-        .import('less/browser', key)
-        .then((browser: LessBrowserFactory) => {
-            const less = browser(window, {});
+): Promise<SourceFileRecord> {
+    const lessFactoryResult = runtime.import('less/lib/less', key);
+    const lessAbstractFileManagerResult = runtime.import(
+        'less/lib/less/environment/abstract-file-manager'
+    );
+    const sourceMapMappingsResult = runtime.resolve(
+        'source-map/lib/mappings.wasm'
+    );
+    const sourceMapResult = runtime.import('source-map');
+
+    return Promise.all([
+        lessFactoryResult,
+        lessAbstractFileManagerResult,
+        sourceMapMappingsResult,
+        sourceMapResult,
+    ]).then(
+        ([lessFactory, AbstractFileManager, sourceMapMappingsUrl, sourceMap]: [
+            any,
+            any,
+            string,
+            typeof SourceMap
+        ]) => {
+            (<any>sourceMap.SourceMapConsumer).initialize({
+                'lib/mappings.wasm': sourceMapMappingsUrl,
+            });
+
+            const environment: any = {
+                encodeBase64: btoa,
+                getSourceMapGenerator: () => sourceMap.SourceMapGenerator,
+            };
+            const fileManager: any = class extends AbstractFileManager {
+                loadFile(filename: string, currentDirectory: string) {
+                    const contentsResult = runtime.host.getFileContents(
+                        `${currentDirectory}/${filename}`
+                    );
+
+                    return Promise.resolve(contentsResult).then(contents => ({
+                        filename,
+                        contents,
+                    }));
+                }
+            };
+            const less = <typeof Less>lessFactory(environment, [fileManager]);
             const options: Less.Options = {
                 filename: key,
+                sourceMap: {
+                    outputSourceFiles: true,
+                },
             };
             return less.render(code, options).then(renderOutput => {
-                return createRegisterFunction(renderOutput.css);
+                return sourceMap.SourceMapConsumer.with(
+                    renderOutput.map,
+                    null,
+                    consumer => {
+                        const node = sourceMap.SourceNode.fromStringWithSourceMap(
+                            renderOutput.css,
+                            consumer
+                        );
+
+                        return createRegisterFunction(node);
+                    }
+                );
             });
-        });
+        }
+    );
 }
 
 const registerTemplate = function($__export: ExportFunction) {

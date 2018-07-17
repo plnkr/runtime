@@ -1,2 +1,2 @@
-import { Runtime } from '.';
-export declare function transpileCss(runtime: Runtime, key: string, code: string): string | Promise<string>;
+import { Runtime, SourceFileRecord } from '.';
+export declare function transpileCss(runtime: Runtime, key: string, code: string): Promise<SourceFileRecord>;

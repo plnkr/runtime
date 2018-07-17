@@ -51,6 +51,9 @@ declare module 'es-module-loader/core/register-loader' {
 
         constructor(baseUri: string);
 
+        import(key: string, parentKey?: string): Promise<ModuleNamespace>;
+        resolve(key: string, parentKey?: string): Promise<string>;
+
         [Loader.moduleNamespace]: ModuleNamespace;
 
         [Loader.instantiate](

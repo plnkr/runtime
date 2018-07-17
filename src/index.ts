@@ -1,6 +1,5 @@
 import { toStringTag } from 'es-module-loader/core/common';
 import RegisterLoader, {
-    LinkRecord,
     LoadRecord,
 } from 'es-module-loader/core/register-loader';
 import {
@@ -15,9 +14,8 @@ import { transpileJs } from './javascript';
 export type SourceFile = SourceFileRecord | string;
 
 export interface SourceFileRecord {
-    filename: string;
     source: string;
-    sourceMap?: string;
+    sourceMap?: object;
 }
 
 export interface RuntimeHost {
@@ -41,10 +39,12 @@ export interface ReplaceEvent {
     previousInstance: RuntimeModuleNamespace;
 }
 
-const CDN_ESM_URL = 'https://dev.jspm.io';
-const CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
+export const CDN_ESM_URL = 'https://dev.jspm.io';
+export const CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
 const DEFAULT_DEPENDENCY_VERSIONS = {
     less: '2.7',
+    'source-map': '0.7.3',
+    typescript: '2.9',
 };
 const EMPTY_MODULE = new ModuleNamespace({});
 const NPM_MODULE_RX = /^((?:@[^/]+\/)?[^/]+)(\/.*)?$/;
@@ -80,6 +80,13 @@ export class RuntimeModuleNamespace extends ModuleNamespace {
                     });
                 }
 
+                Object.defineProperty(baseObject.default, 'default', {
+                    enumerable: true,
+                    get: function() {
+                        return baseObject.default;
+                    },
+                });
+
                 return baseObject.default;
             }
 
@@ -104,13 +111,11 @@ if (toStringTag) {
 }
 
 export class Runtime extends RegisterLoader {
-    private readonly baseUri: string;
-    private readonly cachedResolves: Map<string, string>;
-    private readonly cachedResolvesRev: Map<string, string>;
     private readonly dependencies: Map<string, Set<string>>;
     private readonly dependents: Map<string, Set<string>>;
     private queue: Promise<any>;
 
+    public readonly baseUri: string;
     public readonly defaultDependencyVersions: { [key: string]: string };
     public readonly host: RuntimeHost;
     public readonly useSystem: boolean;
@@ -126,8 +131,6 @@ export class Runtime extends RegisterLoader {
         this.baseUri = document.baseURI.endsWith('/')
             ? document.baseURI
             : `${document.baseURI}/`;
-        this.cachedResolves = new Map();
-        this.cachedResolvesRev = new Map();
         this.useSystem = useSystem;
 
         if (!host) {
@@ -177,19 +180,9 @@ export class Runtime extends RegisterLoader {
     [RegisterLoader.traceResolvedStaticDependency](
         parentKey: string,
         _: string,
-        resolvedKey: string
+        key: string
     ) {
-        if (!this.dependencies.has(parentKey)) {
-            this.dependencies.set(parentKey, new Set());
-        }
-
-        this.dependencies.get(parentKey).add(resolvedKey);
-
-        if (!this.dependents.has(resolvedKey)) {
-            this.dependents.set(resolvedKey, new Set());
-        }
-
-        this.dependents.get(resolvedKey).add(parentKey);
+        this.registerDependency(parentKey, key);
     }
 
     [RegisterLoader.resolve](key: string, parentKey?: string) {
@@ -221,26 +214,67 @@ export class Runtime extends RegisterLoader {
                 );
             }
 
+            if (typeof this.host.resolveBareDependency === 'function') {
+                const resolveResult = this.host.resolveBareDependency(key);
+
+                return Promise.resolve(resolveResult).then(result => {
+                    return result;
+                });
+            }
+
             const matches = key.match(NPM_MODULE_RX);
             const moduleName = (matches && matches[1]) || key;
             const modulePath = (matches && matches[2]) || '';
 
-            return this.import('./package.json')
-                .catch(() => ({}))
-                .then(packageJson => {
-                    const devDependencies =
-                        (packageJson && packageJson.devDependencies) || {};
-                    const dependencies =
-                        (packageJson && packageJson.dependencies) || {};
-                    const range =
-                        dependencies[moduleName] ||
-                        devDependencies[moduleName] ||
-                        this.defaultDependencyVersions[moduleName];
-                    const spec = range ? createJspmRange(range) : '';
+            return this.resolve('./package.json')
+                .catch(() => null)
+                .then(resolvedPackageJsonKey => {
+                    const packageJsonResult =
+                        typeof resolvedPackageJsonKey === 'string'
+                            ? this.import(resolvedPackageJsonKey).catch(
+                                  error =>
+                                      typeof this.host.getCanonicalPath ===
+                                      'function'
+                                          ? Promise.reject(
+                                                new Error(
+                                                    `Error loading '${key}' because 'package.json' is invalid: ${
+                                                        error.message
+                                                    }`
+                                                )
+                                            )
+                                          : {}
+                              )
+                            : Promise.resolve({});
 
-                    return dynamicImport && !this.useSystem
-                        ? `${CDN_ESM_URL}/${moduleName}${spec}${modulePath}`
-                        : `${CDN_SYSTEM_URL}/${moduleName}${spec}${modulePath}`;
+                    return packageJsonResult
+                        .then((packageJson: any) => {
+                            const devDependencies =
+                                (packageJson &&
+                                    packageJson['devDependencies']) ||
+                                {};
+                            const dependencies =
+                                (packageJson && packageJson['dependencies']) ||
+                                {};
+                            const range =
+                                dependencies[moduleName] ||
+                                devDependencies[moduleName] ||
+                                this.defaultDependencyVersions[moduleName];
+                            const spec = range ? createJspmRange(range) : '';
+
+                            return dynamicImport && !this.useSystem
+                                ? `${CDN_ESM_URL}/${moduleName}${spec}${modulePath}`
+                                : `${CDN_SYSTEM_URL}/${moduleName}${spec}${modulePath}`;
+                        })
+                        .then(resolvedKey => {
+                            if (resolvedPackageJsonKey) {
+                                this.registerDependency(
+                                    resolvedKey,
+                                    resolvedPackageJsonKey
+                                );
+                            }
+
+                            return resolvedKey;
+                        });
                 });
         });
     }
@@ -252,7 +286,7 @@ export class Runtime extends RegisterLoader {
         if (key.startsWith(this.baseUri)) {
             const loadHostResult = loadHostModule(
                 this,
-                key.slice(this.baseUri.length),
+                key,
                 processAnonRegister
             );
 
@@ -326,6 +360,20 @@ export class Runtime extends RegisterLoader {
         this.queue = invalidationPromise.catch(() => undefined);
 
         return invalidationPromise;
+    }
+
+    public registerDependency(parentKey: string, key: string) {
+        if (!this.dependencies.has(parentKey)) {
+            this.dependencies.set(parentKey, new Set());
+        }
+
+        this.dependencies.get(parentKey).add(key);
+
+        if (!this.dependents.has(key)) {
+            this.dependents.set(key, new Set());
+        }
+
+        this.dependents.get(key).add(parentKey);
     }
 }
 
@@ -410,22 +458,68 @@ function instantiateJson(
 function instantiateJavascript(
     runtime: Runtime,
     key: string,
-    code: string,
+    codeOrRecord: SourceFile,
     processAnonRegister: ProcessAnonRegister
 ): Promise<ModuleNamespace | void> | ModuleNamespace | void {
+    const code =
+        typeof codeOrRecord === 'string' ? codeOrRecord : codeOrRecord.source;
     const systemRegisterCodeResult = detectRegisterFormat(code)
-        ? code
+        ? codeOrRecord
         : transpileJs(runtime, key, code);
 
-    return Promise.resolve(systemRegisterCodeResult).then(code => {
-        const moduleFactory = new Function('System', 'SystemJS', code);
+    return Promise.resolve(systemRegisterCodeResult).then(
+        transpiledCodeOrRecord => {
+            const code =
+                typeof transpiledCodeOrRecord === 'string'
+                    ? annotateCodeSource(transpiledCodeOrRecord, key)
+                    : annotateCodeSource(
+                          transpiledCodeOrRecord.source,
+                          key,
+                          transpiledCodeOrRecord.sourceMap
+                      );
+            const moduleFactory = new Function('System', 'SystemJS', code);
 
-        moduleFactory(runtime, runtime);
+            moduleFactory(runtime, runtime);
 
-        if (!processAnonRegister()) {
-            return EMPTY_MODULE;
+            if (!processAnonRegister()) {
+                return EMPTY_MODULE;
+            }
         }
-    });
+    );
+}
+
+const SOURCE_MAP_PREFIX =
+    '\n//# sourceMapping' + 'URL=data:application/json;base64,';
+function inlineSourceMap(sourceMap: object | string) {
+    let sourceMapString: string;
+
+    try {
+        sourceMapString =
+            typeof sourceMap === 'string'
+                ? sourceMap
+                : JSON.stringify(sourceMap);
+    } catch (_) {
+        sourceMapString = '';
+    }
+
+    if (typeof btoa !== 'undefined')
+        return (
+            SOURCE_MAP_PREFIX +
+            btoa(unescape(encodeURIComponent(sourceMapString)))
+        );
+    else return '';
+}
+
+function annotateCodeSource(
+    code: string,
+    filename: string,
+    sourceMap?: object
+): string {
+    const suffix =
+        (sourceMap && inlineSourceMap(sourceMap)) ||
+        `\n//# sourceURL=${filename}`;
+
+    return `${code}${suffix}`;
 }
 
 function loadRemoteModule(
@@ -491,7 +585,8 @@ function loadHostModule(
     key: string,
     processAnonRegister: ProcessAnonRegister
 ): Promise<ModuleNamespace | void> {
-    const codeResult = runtime.host.getFileContents(key);
+    const hostKey = key.slice(runtime.baseUri.length);
+    const codeResult = runtime.host.getFileContents(hostKey);
 
     return Promise.resolve(codeResult).then(code => {
         if (typeof code !== 'string') {
