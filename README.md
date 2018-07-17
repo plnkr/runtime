@@ -6,6 +6,30 @@ A browser-native tool for running modern javascript code, using npm dependencies
 
 This is not for production, this is for experimentation without boilerplate overload or for use in niche developer tools like [Plunker](https://next.plnkr.co/edit). Everything is loaded on the fly and, of course, this will impose certain performance limitations.
 
+## Usage
+
+To get a hold of an instance of this module, all you need to do is:
+
+Using the amazing [jspm.io](https://jspm.io) cdn:
+
+```js
+import('https://dev.jspm.io/@plnkr/runtime')
+    .then(esModule => esModule.default)
+    .then(PlunkerRuntime => {
+        // Let your imagination go wild
+    });
+```
+
+or using a popular cdn that fronts npm releases like [unpkg](https://unpkg.com):
+
+```html
+<script src="https://unpkg.com/@plnkr/runtime"></script>
+<script>
+    const runtime = PlunkerRuntime.Runtime(/* ... */);
+    // Get weird
+</script>
+```
+
 ## Example
 
 This example demonstrates an example where we define a custom [react](https://www.npmjs.com/package/react) `Component`, pull this into another file and render it to a string using [react-dom](https://www.npmjs.com/package/react-dom).
