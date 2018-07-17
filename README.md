@@ -15,7 +15,7 @@ Using the amazing [jspm.io](https://jspm.io) cdn:
 ```js
 import('https://dev.jspm.io/@plnkr/runtime')
     .then(esModule => esModule.default)
-    .then(PlunkerRuntime => {
+    .then(PlnkrRuntime => {
         // Let your imagination go wild
     });
 ```
@@ -25,7 +25,7 @@ or using a popular cdn that fronts npm releases like [unpkg](https://unpkg.com):
 ```html
 <script src="https://unpkg.com/@plnkr/runtime"></script>
 <script>
-    const runtime = PlunkerRuntime.Runtime(/* ... */);
+    const PlnkrRuntime = window.PlnkrRuntime;
     // Get weird
 </script>
 ```
