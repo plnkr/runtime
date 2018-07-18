@@ -66,7 +66,9 @@ const files = {
 // Next, we define a host that implements the RuntimeHost interface and resolves files from our mock filesystem
 const host = {
     getCanonicalPath(path) {
-        return files[path] || files[`${path}.js`] || Promise.reject(new Error(`File not found ${path}`));
+        if (files[path]) return path;
+        if (files[`${path}.js`]) return `${path}.js`;
+        return Promise.reject(new Error(`File not found ${path}`));
     },
     getFileContents(canonicalPath) {
         return files[canonicalPath];
