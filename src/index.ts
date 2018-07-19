@@ -6,16 +6,18 @@ import {
     ModuleNamespace,
     ProcessAnonRegister,
 } from 'es-module-loader/core/loader-polyfill';
+import { RawSourceMap } from 'source-map';
 import convertRange from 'sver/convert-range';
 
-import { transpileCss } from './css';
+import { transpileCssToSystemRegister } from './css';
 import { transpileJs } from './javascript';
+import { transpileVue } from './vue';
 
 export type SourceFile = SourceFileRecord | string;
 
 export interface SourceFileRecord {
     source: string;
-    sourceMap?: object;
+    sourceMap?: RawSourceMap;
 }
 
 export interface RuntimeHost {
@@ -113,6 +115,7 @@ if (toStringTag) {
 export class Runtime extends RegisterLoader {
     private readonly dependencies: Map<string, Set<string>>;
     private readonly dependents: Map<string, Set<string>>;
+    private readonly injectedFiles: Map<string, SourceFileRecord>;
     private queue: Promise<any>;
 
     public readonly baseUri: string;
@@ -131,6 +134,7 @@ export class Runtime extends RegisterLoader {
         this.baseUri = document.baseURI.endsWith('/')
             ? document.baseURI
             : `${document.baseURI}/`;
+        this.injectedFiles = new Map();
         this.useSystem = useSystem;
 
         if (!host) {
@@ -158,6 +162,11 @@ export class Runtime extends RegisterLoader {
 
         this.dependencies = new Map();
         this.dependents = new Map();
+
+        this.inject('@empty', {
+            source:
+                'System.register([], function(e) { return { execute: function() { e("exports", {}) } } })',
+        });
     }
 
     [RegisterLoader.traceLoad](load: LoadRecord) {
@@ -186,10 +195,18 @@ export class Runtime extends RegisterLoader {
     }
 
     [RegisterLoader.resolve](key: string, parentKey?: string) {
+        if (this.injectedFiles.has(key)) {
+            return key;
+        }
+
         const urlResult = super[RegisterLoader.resolve](key, parentKey);
 
         return Promise.resolve(urlResult).then(url => {
             if (url) {
+                if (this.injectedFiles.has(url)) {
+                    return url;
+                }
+
                 if (!url.startsWith(this.baseUri)) {
                     return url;
                 }
@@ -283,6 +300,17 @@ export class Runtime extends RegisterLoader {
         key: string,
         processAnonRegister: ProcessAnonRegister
     ): Promise<ModuleNamespace | void> {
+        if (this.injectedFiles.has(key)) {
+            const injectedFile = this.injectedFiles.get(key);
+            const instantiateResult = instantiate(
+                this,
+                key,
+                injectedFile.source,
+                processAnonRegister
+            );
+
+            return Promise.resolve(instantiateResult);
+        }
         if (key.startsWith(this.baseUri)) {
             const loadHostResult = loadHostModule(
                 this,
@@ -300,6 +328,10 @@ export class Runtime extends RegisterLoader {
         );
 
         return Promise.resolve(loadRemoteResult);
+    }
+
+    public inject(key: string, file: SourceFileRecord) {
+        this.injectedFiles.set(key, file);
     }
 
     public invalidate(...pathnames: string[]): Promise<void> {
@@ -419,6 +451,8 @@ function instantiate(
         case '.css':
         case '.less':
             return instantiateCss(runtime, key, code, processAnonRegister);
+        case '.vue':
+            return instantiateVue(runtime, key, code, processAnonRegister);
         default:
             return instantiateJavascript(
                 runtime,
@@ -435,7 +469,7 @@ function instantiateCss(
     code: string,
     processAnonRegister: ProcessAnonRegister
 ): Promise<ModuleNamespace | void> {
-    const transpileResult = transpileCss(runtime, key, code);
+    const transpileResult = transpileCssToSystemRegister(runtime, key, code);
 
     return Promise.resolve(transpileResult).then(transpiledCode => {
         return instantiateJavascript(
@@ -486,6 +520,24 @@ function instantiateJavascript(
             }
         }
     );
+}
+
+function instantiateVue(
+    runtime: Runtime,
+    key: string,
+    code: string,
+    processAnonRegister: ProcessAnonRegister
+) {
+    const transpileResult = transpileVue(runtime, key, code);
+
+    return Promise.resolve(transpileResult).then(sourceFileRecord => {
+        return instantiateJavascript(
+            runtime,
+            key,
+            sourceFileRecord,
+            processAnonRegister
+        );
+    });
 }
 
 const SOURCE_MAP_PREFIX =

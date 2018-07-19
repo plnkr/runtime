@@ -41,6 +41,7 @@
         "@types/less": "0.0.33",
         "@types/react": "^16.4.6",
         "@types/react-dom": "^16.0.6",
+        "@vue/component-compiler-utils": "^2.1.0",
         "code": "^5.2.0",
         "es-module-loader": "github:ggoodman/es-module-loader#feat-extra-hooks",
         "eslint": "^4.19.1",
@@ -59,7 +60,8 @@
         "sver": "^1.7.2",
         "tslib": "^1.9.2",
         "typescript": "^2.9.2",
-        "typescript-eslint-parser": "^15.0.0"
+        "typescript-eslint-parser": "^15.0.0",
+        "vue-template-compiler": "^2.5.16"
     },
     "dependencies": {}
 }

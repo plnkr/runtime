@@ -1,3 +1,4 @@
+import { RawSourceMap } from 'source-map';
 import * as ts from 'typescript';
 
 import { Runtime, SourceFile, SourceFileRecord } from '.';
@@ -119,7 +120,7 @@ function transpileWithCustomHost(
 
     const record: SourceFileRecord = {
         source: file.output.js,
-        sourceMap: tryParse(file.output.sourceMap),
+        sourceMap: <RawSourceMap>tryParse(file.output.sourceMap),
     };
 
     return record;

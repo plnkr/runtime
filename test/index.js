@@ -345,4 +345,159 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
         expect(result.markup).to.equal('h1 {\n  color: red;\n}\n');
         expect(result.elementToString).to.equal('[object HTMLStyleElement]');
     });
+
+    it('will load vue files', async () => {
+        const content = await runtimeCode;
+        const page = await browser.newPage();
+
+        await page.addScriptTag({ content });
+
+        const result = await page.evaluate(async function(useSystem) {
+            window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
+
+            const files = {
+                'package.json': JSON.stringify({
+                    dependencies: {
+                        vue: '2',
+                    },
+                }),
+                'App.vue': `
+                    <template>
+                        <h1>Hello {{ name }}</h1>
+                    </template>
+                    <style scoped>
+                        h1 {
+                            color: blue;
+                        }
+                    </style>
+                    <script>
+                        export default {
+                            data: function() {
+                                return {
+                                    name: 'Runtime',
+                                };
+                            },
+                        }
+                    </script>`,
+                'index.js': `
+                    import Vue from 'vue/dist/vue';
+
+                    import App from './App.vue';
+
+                    new Vue({
+                        el: '#root',
+                        template: '<App/>',
+                        components: { App },
+                    });`,
+            };
+            const runtime = new window['PlnkrRuntime'].Runtime({
+                host: {
+                    getFileContents(pathname) {
+                        return files[pathname]
+                            ? files[pathname]
+                            : Promise.reject(new Error('Not found'));
+                    },
+                },
+            });
+
+            const host = document.createElement('div');
+            host.id = 'root';
+
+            document.body.appendChild(host);
+
+            await runtime.import('./index.js');
+
+            return {
+                markup: document.body.innerHTML,
+                color: getComputedStyle(
+                    document.body.children[0]
+                ).getPropertyValue('color'),
+            };
+        }, useSystem);
+
+        expect(result).to.be.an.object();
+        expect(result.markup)
+            .startsWith('<h1')
+            .and.contains('Hello Runtime')
+            .and.endsWith('</h1>');
+        expect(result.color).to.equal('rgb(0, 0, 255)');
+    });
+
+    it('will load vue files having style blocks requiring less preprocessing', async () => {
+        const content = await runtimeCode;
+        const page = await browser.newPage();
+
+        await page.addScriptTag({ content });
+
+        const result = await page.evaluate(async function(useSystem) {
+            window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
+
+            const files = {
+                'package.json': JSON.stringify({
+                    dependencies: {
+                        vue: '2',
+                    },
+                }),
+                'App.vue': `
+                    <template>
+                        <h1>Hello {{ name }}</h1>
+                    </template>
+                    <style lang="less">
+                        @color: blue;
+                        h1 {
+                            color: @color;
+                        }
+                    </style>
+                    <script>
+                        export default {
+                            data: function() {
+                                return {
+                                    name: 'Runtime',
+                                };
+                            },
+                        }
+                    </script>`,
+                'index.js': `
+                    import Vue from 'vue/dist/vue';
+
+                    import App from './App.vue';
+
+                    new Vue({
+                        el: '#root',
+                        template: '<App/>',
+                        components: { App },
+                    });`,
+            };
+            const runtime = new window['PlnkrRuntime'].Runtime({
+                host: {
+                    getFileContents(pathname) {
+                        return files[pathname]
+                            ? files[pathname]
+                            : Promise.reject(new Error('Not found'));
+                    },
+                },
+            });
+
+            const host = document.createElement('div');
+            host.id = 'root';
+
+            document.body.appendChild(host);
+
+            await runtime.import('./index.js');
+
+            return {
+                markup: document.body.innerHTML,
+                color: getComputedStyle(
+                    document.body.children[0]
+                ).getPropertyValue('color'),
+            };
+        }, useSystem);
+
+        expect(result).to.be.an.object();
+        expect(result.markup)
+            .startsWith('<h1')
+            .and.contains('Hello Runtime')
+            .and.endsWith('</h1>');
+        expect(result.color).to.equal('rgb(0, 0, 255)');
+    });
 }

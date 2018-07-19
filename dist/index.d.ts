@@ -1,9 +1,10 @@
 import RegisterLoader, { LoadRecord } from 'es-module-loader/core/register-loader';
 import { ModuleNamespace, ProcessAnonRegister } from 'es-module-loader/core/loader-polyfill';
+import { RawSourceMap } from 'source-map';
 export declare type SourceFile = SourceFileRecord | string;
 export interface SourceFileRecord {
     source: string;
-    sourceMap?: object;
+    sourceMap?: RawSourceMap;
 }
 export interface RuntimeHost {
     getFileContents(key: string): SourceFile | PromiseLike<SourceFile>;
@@ -35,6 +36,7 @@ export declare class RuntimeModuleNamespace extends ModuleNamespace {
 export declare class Runtime extends RegisterLoader {
     private readonly dependencies;
     private readonly dependents;
+    private readonly injectedFiles;
     private queue;
     readonly baseUri: string;
     readonly defaultDependencyVersions: {
@@ -46,8 +48,9 @@ export declare class Runtime extends RegisterLoader {
     constructor({ defaultDependencyVersions, host, useSystem, }: RuntimeOptions);
     [RegisterLoader.traceLoad](load: LoadRecord): void;
     [RegisterLoader.traceResolvedStaticDependency](parentKey: string, _: string, key: string): void;
-    [RegisterLoader.resolve](key: string, parentKey?: string): Promise<string>;
+    [RegisterLoader.resolve](key: string, parentKey?: string): string | Promise<string>;
     [RegisterLoader.instantiate](key: string, processAnonRegister: ProcessAnonRegister): Promise<ModuleNamespace | void>;
+    inject(key: string, file: SourceFileRecord): void;
     invalidate(...pathnames: string[]): Promise<void>;
     registerDependency(parentKey: string, key: string): void;
 }

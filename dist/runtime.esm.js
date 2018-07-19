@@ -3174,26 +3174,44 @@ function createRegisterFunction(node) {
         sourceMap: result.map.toJSON(),
     };
 }
-function transpileCss(runtime, key, code) {
+function transpileCssToSystemRegister(runtime, key, code) {
     if (key.endsWith('.less')) {
-        return transpileLess(runtime, key, code);
+        return transpileLessToSystemRegister(runtime, key, code);
     }
     return Promise.resolve().then(function () { return sourceMap; }).then((sourceMap) => {
         const node = new sourceMap.SourceNode(1, 0, key, code);
         return createRegisterFunction(node);
     });
 }
-function transpileLess(runtime, key, code) {
-    const lessFactoryResult = runtime.import('less/lib/less', key);
-    const lessAbstractFileManagerResult = runtime.import('less/lib/less/environment/abstract-file-manager');
+function transpileLessToSystemRegister(runtime, key, codeOrRecord) {
     const sourceMapMappingsResult = runtime.resolve('source-map/lib/mappings.wasm');
-    const sourceMapResult = runtime.import('source-map');
+    const sourceMapResult = (runtime.import('source-map'));
+    const transpileLessResult = transpileLess(runtime, key, codeOrRecord);
+    return Promise.all([
+        sourceMapMappingsResult,
+        sourceMapResult,
+        transpileLessResult,
+    ]).then(([sourceMapMappingsUrl, sourceMap, transpiled]) => {
+        sourceMap.SourceMapConsumer.initialize({
+            'lib/mappings.wasm': sourceMapMappingsUrl,
+        });
+        return sourceMap.SourceMapConsumer.with(transpiled.sourceMap, null, consumer => {
+            const node = sourceMap.SourceNode.fromStringWithSourceMap(transpiled.source, consumer);
+            return createRegisterFunction(node);
+        });
+    });
+}
+function transpileLess(runtime, key, codeOrRecord) {
+    const lessFactoryResult = runtime.import('less/lib/less');
+    const lessAbstractFileManagerResult = (runtime.import('less/lib/less/environment/abstract-file-manager'));
+    const sourceMapMappingsResult = runtime.resolve('source-map/lib/mappings.wasm');
+    const sourceMapResult = (runtime.import('source-map'));
     return Promise.all([
         lessFactoryResult,
         lessAbstractFileManagerResult,
         sourceMapMappingsResult,
         sourceMapResult,
-    ]).then(([lessFactory, AbstractFileManager, sourceMapMappingsUrl, sourceMap]) => {
+    ]).then(([lessFactory, AbstractFileManager, sourceMapMappingsUrl, sourceMap,]) => {
         sourceMap.SourceMapConsumer.initialize({
             'lib/mappings.wasm': sourceMapMappingsUrl,
         });
@@ -3217,11 +3235,16 @@ function transpileLess(runtime, key, code) {
                 outputSourceFiles: true,
             },
         };
+        const code = typeof codeOrRecord === 'string'
+            ? codeOrRecord
+            : codeOrRecord.source;
         return less.render(code, options).then(renderOutput => {
-            return sourceMap.SourceMapConsumer.with(renderOutput.map, null, consumer => {
-                const node = sourceMap.SourceNode.fromStringWithSourceMap(renderOutput.css, consumer);
-                return createRegisterFunction(node);
-            });
+            return {
+                source: renderOutput.css,
+                sourceMap: typeof renderOutput.map === 'string'
+                    ? JSON.parse(renderOutput.map)
+                    : undefined,
+            };
         });
     });
 }
@@ -3386,6 +3409,127 @@ class RuntimeCompilerHost {
     }
 }
 
+let nextVueId = 0;
+function transpileVue(runtime, key, code) {
+    const componentCompilerUtilsResult = runtime.import('@vue/component-compiler-utils');
+    const sourceMapResult = (runtime.import('source-map'));
+    const templateCompilerResult = (runtime.import('vue-template-compiler'));
+    return Promise.all([
+        templateCompilerResult,
+        componentCompilerUtilsResult,
+        sourceMapResult,
+    ]).then(([vueTemplateCompiler, vueComponentCompilerUtils, _]) => {
+        const id = `data-v-${nextVueId++}`;
+        const dependencies = [];
+        const options = {};
+        const setters = [];
+        let executeBody = '$__export("default", options);';
+        let registerBody = `var options = { _scopeId: "${id}" };`;
+        const parsedComponent = vueComponentCompilerUtils.parse({
+            source: code,
+            filename: key,
+            compiler: vueTemplateCompiler,
+        });
+        if (parsedComponent.script) {
+            const dependencyUrl = `${key}.js`;
+            runtime.inject(dependencyUrl, {
+                source: parsedComponent.script.content,
+                sourceMap: (parsedComponent.script.map),
+            });
+            dependencies.push(dependencyUrl);
+            setters.push(function (importedScript) {
+                if (Object.keys(importedScript).length <= 1 &&
+                    importedScript.default) {
+                    importedScript = importedScript.default;
+                }
+                for (var key in importedScript) {
+                    options[key] = importedScript[key];
+                }
+            });
+        }
+        if (parsedComponent.template) {
+            const compiledTemplate = vueComponentCompilerUtils.compileTemplate({
+                compiler: vueTemplateCompiler,
+                filename: key,
+                isProduction: true,
+                source: parsedComponent.template.content,
+            });
+            const dependencyUrl = `${key}.html.js`;
+            const source = `System.register([], ${templateRegisterTemplateParts[0]}${compiledTemplate.code}${templateRegisterTemplateParts[1]});`;
+            runtime.inject(dependencyUrl, {
+                source,
+            });
+            dependencies.push(dependencyUrl);
+            setters.push(function (importedTemplate) {
+                options.render = importedTemplate.render;
+                options.staticRenderFns = importedTemplate.staticRenderFns;
+            });
+        }
+        const compiledStyleResults = parsedComponent.styles.map((style, idx) => {
+            const dependencyUrl = `${key}.${idx}.css`;
+            const preprocessStyleResult = preprocessStyle(runtime, key, style);
+            return Promise.resolve(preprocessStyleResult).then(preprocessedStyleRecord => {
+                return vueComponentCompilerUtils
+                    .compileStyleAsync({
+                    filename: key,
+                    id,
+                    map: preprocessedStyleRecord.sourceMap,
+                    scoped: !!style.scoped,
+                    source: preprocessedStyleRecord.source,
+                })
+                    .then(compiledStyle => {
+                    runtime.inject(dependencyUrl, {
+                        source: compiledStyle.code,
+                        sourceMap: compiledStyle.map,
+                    });
+                    dependencies.push(dependencyUrl);
+                    setters.push(function () { });
+                });
+            });
+        });
+        const stylesResult = ((compiledStyleResults.length
+            ? Promise.all(compiledStyleResults)
+            : Promise.resolve()));
+        return stylesResult.then(() => {
+            const constructedScript = `System.register(${JSON.stringify(dependencies)}, function ($__export) {
+                ${registerBody}
+                return {
+                    setters: [${setters
+                .map(setter => setter.toString())
+                .join(',\n')}],
+                    execute: function() {
+                        ${executeBody}
+                    },
+                };ß
+            });`;
+            return {
+                source: constructedScript,
+            };
+        });
+    });
+}
+function preprocessStyle(runtime, key, style) {
+    const record = {
+        source: style.content,
+        sourceMap: style.map,
+    };
+    if (style.lang === 'less') {
+        return transpileLess(runtime, key, record);
+    }
+    return record;
+}
+const templateRegisterTemplate = function ($__export) {
+    return {
+        execute: function () {
+            var render, staticRenderFns;
+            $__export({ render, staticRenderFns });
+        },
+    };
+};
+const templateRegisterTemplateParts = templateRegisterTemplate
+    .toString()
+    .split('var render, staticRenderFns;');
+
 const CDN_ESM_URL = 'https://dev.jspm.io';
 const CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
 const DEFAULT_DEPENDENCY_VERSIONS = {
@@ -3448,6 +3592,7 @@ class Runtime extends RegisterLoader {
         this.baseUri = document.baseURI.endsWith('/')
             ? document.baseURI
             : `${document.baseURI}/`;
+        this.injectedFiles = new Map();
         this.useSystem = useSystem;
         if (!host) {
             throw new TypeError('The options.host property is required');
@@ -3462,6 +3607,9 @@ class Runtime extends RegisterLoader {
         this.defaultDependencyVersions = Object.assign({}, DEFAULT_DEPENDENCY_VERSIONS, defaultDependencyVersions);
         this.dependencies = new Map();
         this.dependents = new Map();
+        this.inject('@empty', {
+            source: 'System.register([], function(e) { return { execute: function() { e("exports", {}) } } })',
+        });
     }
     [(RegisterLoader.traceLoad)](load) {
         const instance = this.registry.get(load.key);
@@ -3479,9 +3627,15 @@ class Runtime extends RegisterLoader {
         this.registerDependency(parentKey, key);
     }
     [RegisterLoader.resolve](key, parentKey) {
+        if (this.injectedFiles.has(key)) {
+            return key;
+        }
         const urlResult = super[RegisterLoader.resolve](key, parentKey);
         return Promise.resolve(urlResult).then(url => {
             if (url) {
+                if (this.injectedFiles.has(url)) {
+                    return url;
+                }
                 if (!url.startsWith(this.baseUri)) {
                     return url;
                 }
@@ -3537,12 +3691,20 @@ class Runtime extends RegisterLoader {
         });
     }
     [RegisterLoader.instantiate](key, processAnonRegister) {
+        if (this.injectedFiles.has(key)) {
+            const injectedFile = this.injectedFiles.get(key);
+            const instantiateResult = instantiate$1(this, key, injectedFile.source, processAnonRegister);
+            return Promise.resolve(instantiateResult);
+        }
         if (key.startsWith(this.baseUri)) {
             const loadHostResult = loadHostModule(this, key, processAnonRegister);
             return Promise.resolve(loadHostResult);
         }
         const loadRemoteResult = loadRemoteModule(this, key, processAnonRegister);
         return Promise.resolve(loadRemoteResult);
+    }
+    inject(key, file) {
+        this.injectedFiles.set(key, file);
     }
     invalidate(...pathnames) {
         const getDependents = (normalizedPath) => {
@@ -3628,12 +3790,14 @@ function instantiate$1(runtime, key, code, processAnonRegister) {
         case '.css':
         case '.less':
             return instantiateCss(runtime, key, code, processAnonRegister);
+        case '.vue':
+            return instantiateVue(runtime, key, code, processAnonRegister);
         default:
             return instantiateJavascript(runtime, key, code, processAnonRegister);
     }
 }
 function instantiateCss(runtime, key, code, processAnonRegister) {
-    const transpileResult = transpileCss(runtime, key, code);
+    const transpileResult = transpileCssToSystemRegister(runtime, key, code);
     return Promise.resolve(transpileResult).then(transpiledCode => {
         return instantiateJavascript(runtime, key, transpiledCode, processAnonRegister);
     });
@@ -3655,6 +3819,12 @@ function instantiateJavascript(runtime, key, codeOrRecord, processAnonRegister) 
         if (!processAnonRegister()) {
             return EMPTY_MODULE;
         }
+    });
+}
+function instantiateVue(runtime, key, code, processAnonRegister) {
+    const transpileResult = transpileVue(runtime, key, code);
+    return Promise.resolve(transpileResult).then(sourceFileRecord => {
+        return instantiateJavascript(runtime, key, sourceFileRecord, processAnonRegister);
     });
 }
 const SOURCE_MAP_PREFIX = '\n//# sourceMapping' + 'URL=data:application/json;base64,';

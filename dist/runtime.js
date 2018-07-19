@@ -3259,20 +3259,39 @@
             sourceMap: result.map.toJSON(),
         };
     }
-    function transpileCss(runtime, key, code) {
+    function transpileCssToSystemRegister(runtime, key, code) {
         if (key.endsWith('.less')) {
-            return transpileLess(runtime, key, code);
+            return transpileLessToSystemRegister(runtime, key, code);
         }
         return Promise.resolve().then(function () { return sourceMap; }).then(function (sourceMap) {
             var node = new sourceMap.SourceNode(1, 0, key, code);
             return createRegisterFunction(node);
         });
     }
-    function transpileLess(runtime, key, code) {
-        var lessFactoryResult = runtime.import('less/lib/less', key);
-        var lessAbstractFileManagerResult = runtime.import('less/lib/less/environment/abstract-file-manager');
+    function transpileLessToSystemRegister(runtime, key, codeOrRecord) {
         var sourceMapMappingsResult = runtime.resolve('source-map/lib/mappings.wasm');
-        var sourceMapResult = runtime.import('source-map');
+        var sourceMapResult = (runtime.import('source-map'));
+        var transpileLessResult = transpileLess(runtime, key, codeOrRecord);
+        return Promise.all([
+            sourceMapMappingsResult,
+            sourceMapResult,
+            transpileLessResult,
+        ]).then(function (_a) {
+            var _b = __read(_a, 3), sourceMapMappingsUrl = _b[0], sourceMap = _b[1], transpiled = _b[2];
+            sourceMap.SourceMapConsumer.initialize({
+                'lib/mappings.wasm': sourceMapMappingsUrl,
+            });
+            return sourceMap.SourceMapConsumer.with(transpiled.sourceMap, null, function (consumer) {
+                var node = sourceMap.SourceNode.fromStringWithSourceMap(transpiled.source, consumer);
+                return createRegisterFunction(node);
+            });
+        });
+    }
+    function transpileLess(runtime, key, codeOrRecord) {
+        var lessFactoryResult = runtime.import('less/lib/less');
+        var lessAbstractFileManagerResult = (runtime.import('less/lib/less/environment/abstract-file-manager'));
+        var sourceMapMappingsResult = runtime.resolve('source-map/lib/mappings.wasm');
+        var sourceMapResult = (runtime.import('source-map'));
         return Promise.all([
             lessFactoryResult,
             lessAbstractFileManagerResult,
@@ -3308,11 +3327,16 @@
                     outputSourceFiles: true,
                 },
             };
+            var code = typeof codeOrRecord === 'string'
+                ? codeOrRecord
+                : codeOrRecord.source;
             return less.render(code, options).then(function (renderOutput) {
-                return sourceMap.SourceMapConsumer.with(renderOutput.map, null, function (consumer) {
-                    var node = sourceMap.SourceNode.fromStringWithSourceMap(renderOutput.css, consumer);
-                    return createRegisterFunction(node);
-                });
+                return {
+                    source: renderOutput.css,
+                    sourceMap: typeof renderOutput.map === 'string'
+                        ? JSON.parse(renderOutput.map)
+                        : undefined,
+                };
             });
         });
     }
@@ -3481,6 +3505,120 @@
         return RuntimeCompilerHost;
     }());
 
+    var nextVueId = 0;
+    function transpileVue(runtime, key, code) {
+        var componentCompilerUtilsResult = runtime.import('@vue/component-compiler-utils');
+        var sourceMapResult = (runtime.import('source-map'));
+        var templateCompilerResult = (runtime.import('vue-template-compiler'));
+        return Promise.all([
+            templateCompilerResult,
+            componentCompilerUtilsResult,
+            sourceMapResult,
+        ]).then(function (_a) {
+            var _b = __read(_a, 3), vueTemplateCompiler = _b[0], vueComponentCompilerUtils = _b[1], _ = _b[2];
+            var id = "data-v-" + nextVueId++;
+            var dependencies = [];
+            var options = {};
+            var setters = [];
+            var executeBody = '$__export("default", options);';
+            var registerBody = "var options = { _scopeId: \"" + id + "\" };";
+            var parsedComponent = vueComponentCompilerUtils.parse({
+                source: code,
+                filename: key,
+                compiler: vueTemplateCompiler,
+            });
+            if (parsedComponent.script) {
+                var dependencyUrl = key + ".js";
+                runtime.inject(dependencyUrl, {
+                    source: parsedComponent.script.content,
+                    sourceMap: (parsedComponent.script.map),
+                });
+                dependencies.push(dependencyUrl);
+                setters.push(function (importedScript) {
+                    if (Object.keys(importedScript).length <= 1 &&
+                        importedScript.default) {
+                        importedScript = importedScript.default;
+                    }
+                    for (var key in importedScript) {
+                        options[key] = importedScript[key];
+                    }
+                });
+            }
+            if (parsedComponent.template) {
+                var compiledTemplate = vueComponentCompilerUtils.compileTemplate({
+                    compiler: vueTemplateCompiler,
+                    filename: key,
+                    isProduction: true,
+                    source: parsedComponent.template.content,
+                });
+                var dependencyUrl = key + ".html.js";
+                var source = "System.register([], " + templateRegisterTemplateParts[0] + compiledTemplate.code + templateRegisterTemplateParts[1] + ");";
+                runtime.inject(dependencyUrl, {
+                    source: source,
+                });
+                dependencies.push(dependencyUrl);
+                setters.push(function (importedTemplate) {
+                    options.render = importedTemplate.render;
+                    options.staticRenderFns = importedTemplate.staticRenderFns;
+                });
+            }
+            var compiledStyleResults = parsedComponent.styles.map(function (style, idx) {
+                var dependencyUrl = key + "." + idx + ".css";
+                var preprocessStyleResult = preprocessStyle(runtime, key, style);
+                return Promise.resolve(preprocessStyleResult).then(function (preprocessedStyleRecord) {
+                    return vueComponentCompilerUtils
+                        .compileStyleAsync({
+                        filename: key,
+                        id: id,
+                        map: preprocessedStyleRecord.sourceMap,
+                        scoped: !!style.scoped,
+                        source: preprocessedStyleRecord.source,
+                    })
+                        .then(function (compiledStyle) {
+                        runtime.inject(dependencyUrl, {
+                            source: compiledStyle.code,
+                            sourceMap: compiledStyle.map,
+                        });
+                        dependencies.push(dependencyUrl);
+                        setters.push(function () { });
+                    });
+                });
+            });
+            var stylesResult = ((compiledStyleResults.length
+                ? Promise.all(compiledStyleResults)
+                : Promise.resolve()));
+            return stylesResult.then(function () {
+                var constructedScript = "System.register(" + JSON.stringify(dependencies) + ", function ($__export) {\n                " + registerBody + "\n                return {\n                    setters: [" + setters
+                    .map(function (setter) { return setter.toString(); })
+                    .join(',\n') + "],\n                    execute: function() {\n                        " + executeBody + "\n                    },\n                };\u00DF\n            });";
+                return {
+                    source: constructedScript,
+                };
+            });
+        });
+    }
+    function preprocessStyle(runtime, key, style) {
+        var record = {
+            source: style.content,
+            sourceMap: style.map,
+        };
+        if (style.lang === 'less') {
+            return transpileLess(runtime, key, record);
+        }
+        return record;
+    }
+    var templateRegisterTemplate = function ($__export) {
+        return {
+            execute: function () {
+                var render, staticRenderFns;
+                $__export({ render: render, staticRenderFns: staticRenderFns });
+            },
+        };
+    };
+    var templateRegisterTemplateParts = templateRegisterTemplate
+        .toString()
+        .split('var render, staticRenderFns;');
+
     var CDN_ESM_URL = 'https://dev.jspm.io';
     var CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
     var DEFAULT_DEPENDENCY_VERSIONS = {
@@ -3549,6 +3687,7 @@
             _this.baseUri = document.baseURI.endsWith('/')
                 ? document.baseURI
                 : document.baseURI + "/";
+            _this.injectedFiles = new Map();
             _this.useSystem = useSystem;
             if (!host) {
                 throw new TypeError('The options.host property is required');
@@ -3563,6 +3702,9 @@
             _this.defaultDependencyVersions = __assign({}, DEFAULT_DEPENDENCY_VERSIONS, defaultDependencyVersions);
             _this.dependencies = new Map();
             _this.dependents = new Map();
+            _this.inject('@empty', {
+                source: 'System.register([], function(e) { return { execute: function() { e("exports", {}) } } })',
+            });
             return _this;
         }
         Runtime.prototype[(RegisterLoader.traceLoad)] = function (load) {
@@ -3582,9 +3724,15 @@
         };
         Runtime.prototype[RegisterLoader.resolve] = function (key, parentKey) {
             var _this = this;
+            if (this.injectedFiles.has(key)) {
+                return key;
+            }
             var urlResult = _super.prototype[RegisterLoader.resolve].call(this, key, parentKey);
             return Promise.resolve(urlResult).then(function (url) {
                 if (url) {
+                    if (_this.injectedFiles.has(url)) {
+                        return url;
+                    }
                     if (!url.startsWith(_this.baseUri)) {
                         return url;
                     }
@@ -3642,12 +3790,20 @@
             });
         };
         Runtime.prototype[RegisterLoader.instantiate] = function (key, processAnonRegister) {
+            if (this.injectedFiles.has(key)) {
+                var injectedFile = this.injectedFiles.get(key);
+                var instantiateResult = instantiate$1(this, key, injectedFile.source, processAnonRegister);
+                return Promise.resolve(instantiateResult);
+            }
             if (key.startsWith(this.baseUri)) {
                 var loadHostResult = loadHostModule(this, key, processAnonRegister);
                 return Promise.resolve(loadHostResult);
             }
             var loadRemoteResult = loadRemoteModule(this, key, processAnonRegister);
             return Promise.resolve(loadRemoteResult);
+        };
+        Runtime.prototype.inject = function (key, file) {
+            this.injectedFiles.set(key, file);
         };
         Runtime.prototype.invalidate = function () {
             var _this = this;
@@ -3750,12 +3906,14 @@
             case '.css':
             case '.less':
                 return instantiateCss(runtime, key, code, processAnonRegister);
+            case '.vue':
+                return instantiateVue(runtime, key, code, processAnonRegister);
             default:
                 return instantiateJavascript(runtime, key, code, processAnonRegister);
         }
     }
     function instantiateCss(runtime, key, code, processAnonRegister) {
-        var transpileResult = transpileCss(runtime, key, code);
+        var transpileResult = transpileCssToSystemRegister(runtime, key, code);
         return Promise.resolve(transpileResult).then(function (transpiledCode) {
             return instantiateJavascript(runtime, key, transpiledCode, processAnonRegister);
         });
@@ -3777,6 +3935,12 @@
             if (!processAnonRegister()) {
                 return EMPTY_MODULE;
             }
+        });
+    }
+    function instantiateVue(runtime, key, code, processAnonRegister) {
+        var transpileResult = transpileVue(runtime, key, code);
+        return Promise.resolve(transpileResult).then(function (sourceFileRecord) {
+            return instantiateJavascript(runtime, key, sourceFileRecord, processAnonRegister);
         });
     }
     var SOURCE_MAP_PREFIX = '\n//# sourceMapping' + 'URL=data:application/json;base64,';
