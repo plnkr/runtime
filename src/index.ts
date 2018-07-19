@@ -1,4 +1,4 @@
-import { toStringTag } from 'es-module-loader/core/common';
+import { baseURI, toStringTag } from 'es-module-loader/core/common';
 import RegisterLoader, {
     LoadRecord,
 } from 'es-module-loader/core/register-loader';
@@ -128,12 +128,12 @@ export class Runtime extends RegisterLoader {
     public [RegisterLoader.moduleNamespace]: ModuleNamespaceClass;
 
     constructor({
-        baseUri = document.baseURI,
+        baseUri = baseURI,
         defaultDependencyVersions = {},
         host,
         useSystem = !!((window || global) as any)['PLNKR_RUNTIME_USE_SYSTEM'],
     }: RuntimeOptions) {
-        super(document.baseURI);
+        super();
 
         if (typeof baseUri !== 'string') {
             throw new TypeError(
@@ -207,7 +207,10 @@ export class Runtime extends RegisterLoader {
             return key;
         }
 
-        const urlResult = super[RegisterLoader.resolve](key, parentKey);
+        const urlResult = super[RegisterLoader.resolve](
+            key,
+            parentKey || this.baseUri
+        );
 
         return Promise.resolve(urlResult).then(url => {
             if (url) {

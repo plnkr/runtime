@@ -1,4 +1,5 @@
 declare module 'es-module-loader/core/common' {
+    export const baseURI: string;
     export const toStringTag: unique symbol;
 }
 
@@ -49,7 +50,7 @@ declare module 'es-module-loader/core/register-loader' {
     export default class RegisterLoader extends Loader {
         public registry: Registry;
 
-        constructor(baseUri: string);
+        constructor();
 
         import(key: string, parentKey?: string): Promise<ModuleNamespace>;
         resolve(key: string, parentKey?: string): Promise<string>;
