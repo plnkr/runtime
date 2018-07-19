@@ -12,6 +12,7 @@ export interface RuntimeHost {
     resolveBareDependency?(key: string): string | PromiseLike<string>;
 }
 export interface RuntimeOptions {
+    baseUri?: string;
     defaultDependencyVersions?: {
         [key: string]: string;
     };
@@ -45,7 +46,7 @@ export declare class Runtime extends RegisterLoader {
     readonly host: RuntimeHost;
     readonly useSystem: boolean;
     [RegisterLoader.moduleNamespace]: ModuleNamespaceClass;
-    constructor({ defaultDependencyVersions, host, useSystem, }: RuntimeOptions);
+    constructor({ baseUri, defaultDependencyVersions, host, useSystem, }: RuntimeOptions);
     [RegisterLoader.traceLoad](load: LoadRecord): void;
     [RegisterLoader.traceResolvedStaticDependency](parentKey: string, _: string, key: string): void;
     [RegisterLoader.resolve](key: string, parentKey?: string): string | Promise<string>;

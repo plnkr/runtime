@@ -27,6 +27,7 @@ export interface RuntimeHost {
 }
 
 export interface RuntimeOptions {
+    baseUri?: string;
     defaultDependencyVersions?: { [key: string]: string };
     host: RuntimeHost;
     useSystem?: boolean;
@@ -44,9 +45,11 @@ export interface ReplaceEvent {
 export const CDN_ESM_URL = 'https://dev.jspm.io';
 export const CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
 const DEFAULT_DEPENDENCY_VERSIONS = {
+    '@vue/component-compiler-utils': '2.1',
     less: '2.7',
     'source-map': '0.7.3',
     typescript: '2.9',
+    'vue-template-compiler': '2.5',
 };
 const EMPTY_MODULE = new ModuleNamespace({});
 const NPM_MODULE_RX = /^((?:@[^/]+\/)?[^/]+)(\/.*)?$/;
@@ -125,15 +128,20 @@ export class Runtime extends RegisterLoader {
     public [RegisterLoader.moduleNamespace]: ModuleNamespaceClass;
 
     constructor({
+        baseUri = document.baseURI,
         defaultDependencyVersions = {},
         host,
         useSystem = !!((window || global) as any)['PLNKR_RUNTIME_USE_SYSTEM'],
     }: RuntimeOptions) {
         super(document.baseURI);
 
-        this.baseUri = document.baseURI.endsWith('/')
-            ? document.baseURI
-            : `${document.baseURI}/`;
+        if (typeof baseUri !== 'string') {
+            throw new TypeError(
+                'The options.baseUri property, if specified, must be a string'
+            );
+        }
+
+        this.baseUri = baseUri.endsWith('/') ? baseUri : `${baseUri}/`;
         this.injectedFiles = new Map();
         this.useSystem = useSystem;
 

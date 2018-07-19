@@ -3622,9 +3622,11 @@
     var CDN_ESM_URL = 'https://dev.jspm.io';
     var CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
     var DEFAULT_DEPENDENCY_VERSIONS = {
+        '@vue/component-compiler-utils': '2.1',
         less: '2.7',
         'source-map': '0.7.3',
         typescript: '2.9',
+        'vue-template-compiler': '2.5',
     };
     var EMPTY_MODULE = new ModuleNamespace({});
     var NPM_MODULE_RX = /^((?:@[^/]+\/)?[^/]+)(\/.*)?$/;
@@ -3682,11 +3684,12 @@
     var Runtime = /** @class */ (function (_super) {
         __extends(Runtime, _super);
         function Runtime(_a) {
-            var _b = _a.defaultDependencyVersions, defaultDependencyVersions = _b === void 0 ? {} : _b, host = _a.host, _c = _a.useSystem, useSystem = _c === void 0 ? !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'] : _c;
+            var _b = _a.baseUri, baseUri = _b === void 0 ? document.baseURI : _b, _c = _a.defaultDependencyVersions, defaultDependencyVersions = _c === void 0 ? {} : _c, host = _a.host, _d = _a.useSystem, useSystem = _d === void 0 ? !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'] : _d;
             var _this = _super.call(this, document.baseURI) || this;
-            _this.baseUri = document.baseURI.endsWith('/')
-                ? document.baseURI
-                : document.baseURI + "/";
+            if (typeof baseUri !== 'string') {
+                throw new TypeError('The options.baseUri property, if specified, must be a string');
+            }
+            _this.baseUri = baseUri.endsWith('/') ? baseUri : baseUri + "/";
             _this.injectedFiles = new Map();
             _this.useSystem = useSystem;
             if (!host) {

@@ -3533,9 +3533,11 @@ const templateRegisterTemplateParts = templateRegisterTemplate
 const CDN_ESM_URL = 'https://dev.jspm.io';
 const CDN_SYSTEM_URL = 'https://system-dev.jspm.io';
 const DEFAULT_DEPENDENCY_VERSIONS = {
+    '@vue/component-compiler-utils': '2.1',
     less: '2.7',
     'source-map': '0.7.3',
     typescript: '2.9',
+    'vue-template-compiler': '2.5',
 };
 const EMPTY_MODULE = new ModuleNamespace({});
 const NPM_MODULE_RX = /^((?:@[^/]+\/)?[^/]+)(\/.*)?$/;
@@ -3587,11 +3589,12 @@ if (toStringTag) {
     });
 }
 class Runtime extends RegisterLoader {
-    constructor({ defaultDependencyVersions = {}, host, useSystem = !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'], }) {
+    constructor({ baseUri = document.baseURI, defaultDependencyVersions = {}, host, useSystem = !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'], }) {
         super(document.baseURI);
-        this.baseUri = document.baseURI.endsWith('/')
-            ? document.baseURI
-            : `${document.baseURI}/`;
+        if (typeof baseUri !== 'string') {
+            throw new TypeError('The options.baseUri property, if specified, must be a string');
+        }
+        this.baseUri = baseUri.endsWith('/') ? baseUri : `${baseUri}/`;
         this.injectedFiles = new Map();
         this.useSystem = useSystem;
         if (!host) {
