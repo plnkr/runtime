@@ -3589,8 +3589,8 @@ if (toStringTag) {
     });
 }
 class Runtime extends RegisterLoader {
-    constructor({ baseUri = document.baseURI, defaultDependencyVersions = {}, host, useSystem = !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'], }) {
-        super(document.baseURI);
+    constructor({ baseUri = baseURI, defaultDependencyVersions = {}, host, useSystem = !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'], }) {
+        super();
         if (typeof baseUri !== 'string') {
             throw new TypeError('The options.baseUri property, if specified, must be a string');
         }
@@ -3633,7 +3633,7 @@ class Runtime extends RegisterLoader {
         if (this.injectedFiles.has(key)) {
             return key;
         }
-        const urlResult = super[RegisterLoader.resolve](key, parentKey);
+        const urlResult = super[RegisterLoader.resolve](key, parentKey || this.baseUri);
         return Promise.resolve(urlResult).then(url => {
             if (url) {
                 if (this.injectedFiles.has(url)) {

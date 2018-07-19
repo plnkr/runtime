@@ -3684,8 +3684,8 @@
     var Runtime = /** @class */ (function (_super) {
         __extends(Runtime, _super);
         function Runtime(_a) {
-            var _b = _a.baseUri, baseUri = _b === void 0 ? document.baseURI : _b, _c = _a.defaultDependencyVersions, defaultDependencyVersions = _c === void 0 ? {} : _c, host = _a.host, _d = _a.useSystem, useSystem = _d === void 0 ? !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'] : _d;
-            var _this = _super.call(this, document.baseURI) || this;
+            var _b = _a.baseUri, baseUri = _b === void 0 ? baseURI : _b, _c = _a.defaultDependencyVersions, defaultDependencyVersions = _c === void 0 ? {} : _c, host = _a.host, _d = _a.useSystem, useSystem = _d === void 0 ? !!(window || global)['PLNKR_RUNTIME_USE_SYSTEM'] : _d;
+            var _this = _super.call(this) || this;
             if (typeof baseUri !== 'string') {
                 throw new TypeError('The options.baseUri property, if specified, must be a string');
             }
@@ -3730,7 +3730,7 @@
             if (this.injectedFiles.has(key)) {
                 return key;
             }
-            var urlResult = _super.prototype[RegisterLoader.resolve].call(this, key, parentKey);
+            var urlResult = _super.prototype[RegisterLoader.resolve].call(this, key, parentKey || this.baseUri);
             return Promise.resolve(urlResult).then(function (url) {
                 if (url) {
                     if (_this.injectedFiles.has(url)) {
