@@ -38,13 +38,14 @@ export function transpileVue(
         componentCompilerUtilsResult,
         sourceMapResult,
     ]).then(([vueTemplateCompiler, vueComponentCompilerUtils, _]) => {
-        const id = `data-v-${nextVueId++}`;
+        const id = nextVueId++;
+        const vueId = `data-v-${id}`;
         const dependencies: string[] = [];
         const options: VueOptions = {};
         const setters: Function[] = [];
 
         let executeBody = '$__export("default", options);';
-        let registerBody = `var options = { _scopeId: "${id}" };`;
+        let registerBody = `var options = { _scopeId: "${vueId}" };`;
 
         const parsedComponent = vueComponentCompilerUtils.parse({
             source: code,
@@ -53,7 +54,7 @@ export function transpileVue(
         });
 
         if (parsedComponent.script) {
-            const dependencyUrl = `${key}.js`;
+            const dependencyUrl = `${key}.${id}.js`;
 
             runtime.inject(dependencyUrl, {
                 source: parsedComponent.script.content,
@@ -61,6 +62,7 @@ export function transpileVue(
                     (<any>parsedComponent.script.map)
                 ),
             });
+            runtime.registerDependency(key, dependencyUrl);
 
             dependencies.push(dependencyUrl);
             setters.push(function(importedScript: any) {
@@ -84,7 +86,7 @@ export function transpileVue(
                 isProduction: true, // Needed to avoid running prettier
                 source: parsedComponent.template.content,
             });
-            const dependencyUrl = `${key}.html.js`;
+            const dependencyUrl = `${key}.${id}.html.js`;
             const source = `System.register([], ${
                 templateRegisterTemplateParts[0]
             }${compiledTemplate.code}${templateRegisterTemplateParts[1]});`;
@@ -92,6 +94,7 @@ export function transpileVue(
             runtime.inject(dependencyUrl, {
                 source,
             });
+            runtime.registerDependency(key, dependencyUrl);
 
             dependencies.push(dependencyUrl);
             setters.push(function(importedTemplate: any) {
@@ -102,7 +105,7 @@ export function transpileVue(
 
         const compiledStyleResults = parsedComponent.styles.map(
             (style, idx) => {
-                const dependencyUrl = `${key}.${idx}.css`;
+                const dependencyUrl = `${key}.${id}.${idx}.css`;
                 const preprocessStyleResult = preprocessStyle(
                     runtime,
                     key,
@@ -114,7 +117,7 @@ export function transpileVue(
                         return vueComponentCompilerUtils
                             .compileStyleAsync({
                                 filename: key,
-                                id,
+                                id: vueId,
                                 map: preprocessedStyleRecord.sourceMap,
                                 scoped: !!style.scoped,
                                 source: preprocessedStyleRecord.source,
@@ -124,6 +127,7 @@ export function transpileVue(
                                     source: compiledStyle.code,
                                     sourceMap: compiledStyle.map,
                                 });
+                                runtime.registerDependency(key, dependencyUrl);
 
                                 dependencies.push(dependencyUrl);
                                 setters.push(function() {});

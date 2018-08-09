@@ -2,7 +2,13 @@ import escapeString from 'js-string-escape';
 import Less from 'less';
 import * as SourceMap from 'source-map';
 
-import { ReplaceEvent, Runtime, SourceFile, SourceFileRecord } from '.';
+import {
+    AfterUnloadEvent,
+    ReplaceEvent,
+    Runtime,
+    SourceFile,
+    SourceFileRecord,
+} from '.';
 
 interface ExportFunction {
     (name: string, value: any): void;
@@ -165,13 +171,17 @@ export function transpileLess(
 
 const registerTemplate = function($__export: ExportFunction) {
     var element: HTMLStyleElement;
-    var replace: HTMLStyleElement;
     var markup: string;
 
-    function __onReplace(replaceEvent: ReplaceEvent): void {
-        replace = replaceEvent.previousInstance.element;
+    function __onAfterUnload(event: AfterUnloadEvent): void {
+        event.preventDefault();
     }
 
+    function __onReplace(event: ReplaceEvent): void {
+        event.previousInstance.element.remove();
+    }
+
+    $__export('__onAfterUnload', __onAfterUnload);
     $__export('__onReplace', __onReplace);
 
     return {
@@ -184,12 +194,7 @@ const registerTemplate = function($__export: ExportFunction) {
             element.type = 'text/css';
             element.innerHTML = markup;
 
-            if (replace) {
-                document.head.replaceChild(element, replace);
-                replace = null;
-            } else {
-                document.head.appendChild(element);
-            }
+            document.head.appendChild(element);
 
             $__export('element', element);
         },

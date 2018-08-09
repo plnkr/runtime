@@ -1,5 +1,6 @@
 import { baseURI, toStringTag } from 'es-module-loader/core/common';
 import RegisterLoader, {
+    LinkRecord,
     LoadRecord,
 } from 'es-module-loader/core/register-loader';
 import {
@@ -34,6 +35,8 @@ export interface RuntimeOptions {
 }
 
 export interface AfterUnloadEvent {
+    defaultPrevented: boolean;
+    preventDefault(): void;
     propagationStopped: boolean;
     stopPropagation(): void;
 }
@@ -170,15 +173,10 @@ export class Runtime extends RegisterLoader {
 
         this.dependencies = new Map();
         this.dependents = new Map();
-
-        this.inject('@empty', {
-            source:
-                'System.register([], function(e) { return { execute: function() { e("exports", {}) } } })',
-        });
     }
 
-    [RegisterLoader.traceLoad](load: LoadRecord) {
-        const instance = this.registry.get(load.key);
+    [RegisterLoader.traceLoad](load: LoadRecord, link: LinkRecord) {
+        const instance = this.registry.get(load.key) || link.moduleObj;
         const previousInstance = this.registry.get(`${load.key}@prev`);
 
         if (
@@ -345,7 +343,7 @@ export class Runtime extends RegisterLoader {
         this.injectedFiles.set(key, file);
     }
 
-    public invalidate(...pathnames: string[]): Promise<void> {
+    public invalidate(key: string, parentKey?: string): Promise<void> {
         const getDependents = (normalizedPath: string): string[] => {
             if (this.dependents.has(normalizedPath)) {
                 return Array.from(this.dependents.get(normalizedPath));
@@ -356,13 +354,13 @@ export class Runtime extends RegisterLoader {
 
         const seen = new Set();
         const invalidationPromise = this.queue.then(() => {
-            const invalidations = [...pathnames];
+            const invalidations = [[key, parentKey]];
             const handleNextInvalidation = (): Promise<any> => {
                 if (!invalidations.length) return Promise.resolve();
 
-                const pathname = invalidations.shift();
+                const [key, parentKey] = invalidations.shift();
 
-                return this.resolve(pathname).then(resolvedPathname => {
+                return this.resolve(key, parentKey).then(resolvedPathname => {
                     if (!seen.has(resolvedPathname)) {
                         seen.add(resolvedPathname);
 
@@ -370,25 +368,37 @@ export class Runtime extends RegisterLoader {
                         const instance = this.registry.get(resolvedPathname);
                         const event: AfterUnloadEvent = {
                             propagationStopped: false,
-                            stopPropagation() {
+                            defaultPrevented: false,
+                            preventDefault() {
                                 this.defaultPrevented = true;
                             },
+                            stopPropagation() {
+                                this.propagationStopped = true;
+                            },
                         };
-
-                        if (
-                            instance &&
-                            typeof instance.__onAfterUnload === 'function'
-                        ) {
-                            instance.__onAfterUnload(event);
-                        }
 
                         this.registry.delete(resolvedPathname);
                         this.dependencies.delete(resolvedPathname);
                         this.dependents.delete(resolvedPathname);
 
-                        if (!event.propagationStopped) {
-                            for (const dependent of dependents) {
-                                invalidations.push(dependent);
+                        if (instance) {
+                            if (
+                                typeof instance.__onAfterUnload === 'function'
+                            ) {
+                                instance.__onAfterUnload(event);
+                            }
+
+                            if (!event.propagationStopped) {
+                                for (const dependent of dependents) {
+                                    invalidations.push([dependent]);
+                                }
+                            }
+
+                            if (event.defaultPrevented) {
+                                this.registry.set(
+                                    `${resolvedPathname}@prev`,
+                                    instance
+                                );
                             }
                         }
                     }
@@ -522,9 +532,16 @@ function instantiateJavascript(
                           key,
                           transpiledCodeOrRecord.sourceMap
                       );
-            const moduleFactory = new Function('System', 'SystemJS', code);
+            const moduleFactory = new Function(
+                'System',
+                'SystemJS',
+                'module',
+                code
+            );
 
-            moduleFactory(runtime, runtime);
+            moduleFactory(runtime, runtime, {
+                id: key,
+            });
 
             if (!processAnonRegister()) {
                 return EMPTY_MODULE;

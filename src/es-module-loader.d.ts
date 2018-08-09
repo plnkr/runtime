@@ -41,6 +41,7 @@ declare module 'es-module-loader/core/register-loader' {
     export interface LinkRecord {
         dependencies: string[];
         depMap: DepMap;
+        moduleObj?: ModuleNamespace;
     }
 
     export interface LoadRecord {
@@ -86,5 +87,6 @@ declare module 'es-module-loader/core/register-loader' {
     export interface Registry {
         delete(key: string): boolean;
         get(key: string): ModuleNamespace;
+        set(key: string, instance: ModuleNamespace): void;
     }
 }
