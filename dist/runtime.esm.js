@@ -3250,11 +3250,14 @@ function transpileLess(runtime, key, codeOrRecord) {
 }
 const registerTemplate = function ($__export) {
     var element;
-    var replace;
     var markup;
-    function __onReplace(replaceEvent) {
-        replace = replaceEvent.previousInstance.element;
+    function __onAfterUnload(event) {
+        event.preventDefault();
     }
+    function __onReplace(event) {
+        event.previousInstance.element.remove();
+    }
+    $__export('__onAfterUnload', __onAfterUnload);
     $__export('__onReplace', __onReplace);
     return {
         execute: function () {
@@ -3263,13 +3266,7 @@ const registerTemplate = function ($__export) {
             element = document.createElement('style');
             element.type = 'text/css';
             element.innerHTML = markup;
-            if (replace) {
-                document.head.replaceChild(element, replace);
-                replace = null;
-            }
-            else {
-                document.head.appendChild(element);
-            }
+            document.head.appendChild(element);
             $__export('element', element);
         },
     };
@@ -3294,14 +3291,7 @@ function transpileJs(runtime, key, code) {
             : Promise.resolve({});
         const typescriptResult = (runtime.import('typescript', key));
         return Promise.all([configFileResult, typescriptResult])
-            .then(args => {
-            try {
-                return transpileWithCustomHost(key, code, args[0], args[1]);
-            }
-            catch (error) {
-                return Promise.reject(error);
-            }
-        })
+            .then(args => transpileWithCustomHost(key, code, args[0], args[1]))
             .then(sourceFileRecord => {
             if (resolvedConfigFileName) {
                 runtime.registerDependency(key, resolvedConfigFileName);
@@ -3339,7 +3329,7 @@ function transpileWithCustomHost(key, code, config, typescript) {
     }
     if (file.output.failure) {
         const error = new Error(`Compilation failed: ${file.output.diags.map(diag => typescript.flattenDiagnosticMessageText(diag.messageText, '\n'))}`);
-        throw error;
+        return Promise.reject(error);
     }
     const record = {
         source: file.output.js,
@@ -3419,23 +3409,25 @@ function transpileVue(runtime, key, code) {
         componentCompilerUtilsResult,
         sourceMapResult,
     ]).then(([vueTemplateCompiler, vueComponentCompilerUtils, _]) => {
-        const id = `data-v-${nextVueId++}`;
+        const id = nextVueId++;
+        const vueId = `data-v-${id}`;
         const dependencies = [];
         const options = {};
         const setters = [];
         let executeBody = '$__export("default", options);';
-        let registerBody = `var options = { _scopeId: "${id}" };`;
+        let registerBody = `var options = { _scopeId: "${vueId}" };`;
         const parsedComponent = vueComponentCompilerUtils.parse({
             source: code,
             filename: key,
             compiler: vueTemplateCompiler,
         });
         if (parsedComponent.script) {
-            const dependencyUrl = `${key}.js`;
+            const dependencyUrl = `${key}.${id}.js`;
             runtime.inject(dependencyUrl, {
                 source: parsedComponent.script.content,
                 sourceMap: (parsedComponent.script.map),
             });
+            runtime.registerDependency(key, dependencyUrl);
             dependencies.push(dependencyUrl);
             setters.push(function (importedScript) {
                 if (Object.keys(importedScript).length <= 1 &&
@@ -3454,11 +3446,12 @@ function transpileVue(runtime, key, code) {
                 isProduction: true,
                 source: parsedComponent.template.content,
             });
-            const dependencyUrl = `${key}.html.js`;
+            const dependencyUrl = `${key}.${id}.html.js`;
             const source = `System.register([], ${templateRegisterTemplateParts[0]}${compiledTemplate.code}${templateRegisterTemplateParts[1]});`;
             runtime.inject(dependencyUrl, {
                 source,
             });
+            runtime.registerDependency(key, dependencyUrl);
             dependencies.push(dependencyUrl);
             setters.push(function (importedTemplate) {
                 options.render = importedTemplate.render;
@@ -3466,13 +3459,13 @@ function transpileVue(runtime, key, code) {
             });
         }
         const compiledStyleResults = parsedComponent.styles.map((style, idx) => {
-            const dependencyUrl = `${key}.${idx}.css`;
+            const dependencyUrl = `${key}.${id}.${idx}.css`;
             const preprocessStyleResult = preprocessStyle(runtime, key, style);
             return Promise.resolve(preprocessStyleResult).then(preprocessedStyleRecord => {
                 return vueComponentCompilerUtils
                     .compileStyleAsync({
                     filename: key,
-                    id,
+                    id: vueId,
                     map: preprocessedStyleRecord.sourceMap,
                     scoped: !!style.scoped,
                     source: preprocessedStyleRecord.source,
@@ -3482,6 +3475,7 @@ function transpileVue(runtime, key, code) {
                         source: compiledStyle.code,
                         sourceMap: compiledStyle.map,
                     });
+                    runtime.registerDependency(key, dependencyUrl);
                     dependencies.push(dependencyUrl);
                     setters.push(function () { });
                 });
@@ -3553,10 +3547,24 @@ function detectRegisterFormat(source) {
 }
 class RuntimeModuleNamespace extends ModuleNamespace {
     constructor(baseObject) {
+        if (Array.isArray(baseObject)) {
+            Object.defineProperty(baseObject, toStringTag, {
+                value: 'Module',
+            });
+            return baseObject;
+        }
         if (baseObject instanceof Object &&
             !baseObject.__useDefault &&
             'default' in baseObject &&
             Object.keys(baseObject).length <= 1) {
+            Object.keys(baseObject.default).forEach(key => {
+                Object.defineProperty(baseObject, key, {
+                    enumerable: true,
+                    get: function () {
+                        return baseObject.default[key];
+                    },
+                });
+            });
             if (typeof baseObject.default === 'function') {
                 if (typeof Symbol !== 'undefined') {
                     Object.defineProperty(baseObject.default, toStringTag, {
@@ -3571,14 +3579,6 @@ class RuntimeModuleNamespace extends ModuleNamespace {
                 });
                 return baseObject.default;
             }
-            Object.keys(baseObject.default).forEach(key => {
-                Object.defineProperty(baseObject, key, {
-                    enumerable: true,
-                    get: function () {
-                        return baseObject.default[key];
-                    },
-                });
-            });
         }
         super(baseObject);
     }
@@ -3610,12 +3610,9 @@ class Runtime extends RegisterLoader {
         this.defaultDependencyVersions = Object.assign({}, DEFAULT_DEPENDENCY_VERSIONS, defaultDependencyVersions);
         this.dependencies = new Map();
         this.dependents = new Map();
-        this.inject('@empty', {
-            source: 'System.register([], function(e) { return { execute: function() { e("exports", {}) } } })',
-        });
     }
-    [(RegisterLoader.traceLoad)](load) {
-        const instance = this.registry.get(load.key);
+    [(RegisterLoader.traceLoad)](load, link) {
+        const instance = this.registry.get(load.key) || link.moduleObj;
         const previousInstance = this.registry.get(`${load.key}@prev`);
         if (instance &&
             previousInstance &&
@@ -3709,7 +3706,7 @@ class Runtime extends RegisterLoader {
     inject(key, file) {
         this.injectedFiles.set(key, file);
     }
-    invalidate(...pathnames) {
+    invalidate(key, parentKey) {
         const getDependents = (normalizedPath) => {
             if (this.dependents.has(normalizedPath)) {
                 return Array.from(this.dependents.get(normalizedPath));
@@ -3718,32 +3715,40 @@ class Runtime extends RegisterLoader {
         };
         const seen = new Set();
         const invalidationPromise = this.queue.then(() => {
-            const invalidations = [...pathnames];
+            const invalidations = [[key, parentKey]];
             const handleNextInvalidation = () => {
                 if (!invalidations.length)
                     return Promise.resolve();
-                const pathname = invalidations.shift();
-                return this.resolve(pathname).then(resolvedPathname => {
+                const [key, parentKey] = invalidations.shift();
+                return this.resolve(key, parentKey).then(resolvedPathname => {
                     if (!seen.has(resolvedPathname)) {
                         seen.add(resolvedPathname);
                         const dependents = getDependents(resolvedPathname);
                         const instance = this.registry.get(resolvedPathname);
                         const event = {
                             propagationStopped: false,
-                            stopPropagation() {
+                            defaultPrevented: false,
+                            preventDefault() {
                                 this.defaultPrevented = true;
                             },
+                            stopPropagation() {
+                                this.propagationStopped = true;
+                            },
                         };
-                        if (instance &&
-                            typeof instance.__onAfterUnload === 'function') {
-                            instance.__onAfterUnload(event);
-                        }
                         this.registry.delete(resolvedPathname);
                         this.dependencies.delete(resolvedPathname);
                         this.dependents.delete(resolvedPathname);
-                        if (!event.propagationStopped) {
-                            for (const dependent of dependents) {
-                                invalidations.push(dependent);
+                        if (instance) {
+                            if (typeof instance.__onAfterUnload === 'function') {
+                                instance.__onAfterUnload(event);
+                            }
+                            if (!event.propagationStopped) {
+                                for (const dependent of dependents) {
+                                    invalidations.push([dependent]);
+                                }
+                            }
+                            if (event.defaultPrevented) {
+                                this.registry.set(`${resolvedPathname}@prev`, instance);
                             }
                         }
                     }
@@ -3801,12 +3806,25 @@ function instantiate$1(runtime, key, code, processAnonRegister) {
 }
 function instantiateCss(runtime, key, code, processAnonRegister) {
     const transpileResult = transpileCssToSystemRegister(runtime, key, code);
-    return Promise.resolve(transpileResult).then(transpiledCode => {
-        return instantiateJavascript(runtime, key, transpiledCode, processAnonRegister);
-    });
+    return Promise.resolve(transpileResult).then(transpiledCode => instantiateJavascript(runtime, key, transpiledCode, processAnonRegister));
 }
-function instantiateJson(runtime, _, code) {
-    return new runtime[RegisterLoader.moduleNamespace](JSON.parse(code));
+function instantiateJson(_, key, code) {
+    try {
+        const parsed = JSON.parse(code);
+        Object.defineProperty(parsed, 'default', {
+            enumerable: true,
+            get() {
+                return parsed;
+            },
+        });
+        Object.defineProperty(parsed, toStringTag, {
+            value: 'Module',
+        });
+        return parsed;
+    }
+    catch (e) {
+        throw new Error(`Error parsing json '${key}': ${e.message}`);
+    }
 }
 function instantiateJavascript(runtime, key, codeOrRecord, processAnonRegister) {
     const code = typeof codeOrRecord === 'string' ? codeOrRecord : codeOrRecord.source;
@@ -3817,8 +3835,10 @@ function instantiateJavascript(runtime, key, codeOrRecord, processAnonRegister) 
         const code = typeof transpiledCodeOrRecord === 'string'
             ? annotateCodeSource(transpiledCodeOrRecord, key)
             : annotateCodeSource(transpiledCodeOrRecord.source, key, transpiledCodeOrRecord.sourceMap);
-        const moduleFactory = new Function('System', 'SystemJS', code);
-        moduleFactory(runtime, runtime);
+        const moduleFactory = new Function('System', 'SystemJS', 'module', code);
+        moduleFactory(runtime, runtime, {
+            id: key,
+        });
         if (!processAnonRegister()) {
             return EMPTY_MODULE;
         }
@@ -3826,9 +3846,7 @@ function instantiateJavascript(runtime, key, codeOrRecord, processAnonRegister) 
 }
 function instantiateVue(runtime, key, code, processAnonRegister) {
     const transpileResult = transpileVue(runtime, key, code);
-    return Promise.resolve(transpileResult).then(sourceFileRecord => {
-        return instantiateJavascript(runtime, key, sourceFileRecord, processAnonRegister);
-    });
+    return Promise.resolve(transpileResult).then(sourceFileRecord => instantiateJavascript(runtime, key, sourceFileRecord, processAnonRegister));
 }
 const SOURCE_MAP_PREFIX = '\n//# sourceMapping' + 'URL=data:application/json;base64,';
 function inlineSourceMap(sourceMap) {

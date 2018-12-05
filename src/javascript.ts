@@ -31,18 +31,9 @@ export function transpileJs(
             );
 
             return Promise.all([configFileResult, typescriptResult])
-                .then(args => {
-                    try {
-                        return transpileWithCustomHost(
-                            key,
-                            code,
-                            args[0],
-                            args[1]
-                        );
-                    } catch (error) {
-                        return <Promise<SourceFileRecord>>Promise.reject(error);
-                    }
-                })
+                .then(args =>
+                    transpileWithCustomHost(key, code, args[0], args[1])
+                )
                 .then(sourceFileRecord => {
                     if (resolvedConfigFileName) {
                         runtime.registerDependency(key, resolvedConfigFileName);
@@ -60,7 +51,7 @@ function transpileWithCustomHost(
         compilerOptions?: ts.CompilerOptions;
     },
     typescript: typeof ts
-): SourceFileRecord {
+): Promise<SourceFileRecord> | SourceFileRecord {
     const host = new RuntimeCompilerHost(typescript);
     const file = host.addFile(key, code, typescript.ScriptTarget.ES5);
 
@@ -115,7 +106,7 @@ function transpileWithCustomHost(
             )}`
         );
 
-        throw error;
+        return Promise.reject(error);
     }
 
     const record: SourceFileRecord = {

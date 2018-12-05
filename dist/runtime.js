@@ -72,12 +72,6 @@
         return ar;
     }
 
-    function __spread() {
-        for (var ar = [], i = 0; i < arguments.length; i++)
-            ar = ar.concat(__read(arguments[i]));
-        return ar;
-    }
-
     /*
      * Environment
      */
@@ -3342,11 +3336,14 @@
     }
     var registerTemplate = function ($__export) {
         var element;
-        var replace;
         var markup;
-        function __onReplace(replaceEvent) {
-            replace = replaceEvent.previousInstance.element;
+        function __onAfterUnload(event) {
+            event.preventDefault();
         }
+        function __onReplace(event) {
+            event.previousInstance.element.remove();
+        }
+        $__export('__onAfterUnload', __onAfterUnload);
         $__export('__onReplace', __onReplace);
         return {
             execute: function () {
@@ -3355,13 +3352,7 @@
                 element = document.createElement('style');
                 element.type = 'text/css';
                 element.innerHTML = markup;
-                if (replace) {
-                    document.head.replaceChild(element, replace);
-                    replace = null;
-                }
-                else {
-                    document.head.appendChild(element);
-                }
+                document.head.appendChild(element);
                 $__export('element', element);
             },
         };
@@ -3387,12 +3378,7 @@
             var typescriptResult = (runtime.import('typescript', key));
             return Promise.all([configFileResult, typescriptResult])
                 .then(function (args) {
-                try {
-                    return transpileWithCustomHost(key, code, args[0], args[1]);
-                }
-                catch (error) {
-                    return Promise.reject(error);
-                }
+                return transpileWithCustomHost(key, code, args[0], args[1]);
             })
                 .then(function (sourceFileRecord) {
                 if (resolvedConfigFileName) {
@@ -3433,7 +3419,7 @@
             var error = new Error("Compilation failed: " + file.output.diags.map(function (diag) {
                 return typescript.flattenDiagnosticMessageText(diag.messageText, '\n');
             }));
-            throw error;
+            return Promise.reject(error);
         }
         var record = {
             source: file.output.js,
@@ -3516,23 +3502,25 @@
             sourceMapResult,
         ]).then(function (_a) {
             var _b = __read(_a, 3), vueTemplateCompiler = _b[0], vueComponentCompilerUtils = _b[1], _ = _b[2];
-            var id = "data-v-" + nextVueId++;
+            var id = nextVueId++;
+            var vueId = "data-v-" + id;
             var dependencies = [];
             var options = {};
             var setters = [];
             var executeBody = '$__export("default", options);';
-            var registerBody = "var options = { _scopeId: \"" + id + "\" };";
+            var registerBody = "var options = { _scopeId: \"" + vueId + "\" };";
             var parsedComponent = vueComponentCompilerUtils.parse({
                 source: code,
                 filename: key,
                 compiler: vueTemplateCompiler,
             });
             if (parsedComponent.script) {
-                var dependencyUrl = key + ".js";
+                var dependencyUrl = key + "." + id + ".js";
                 runtime.inject(dependencyUrl, {
                     source: parsedComponent.script.content,
                     sourceMap: (parsedComponent.script.map),
                 });
+                runtime.registerDependency(key, dependencyUrl);
                 dependencies.push(dependencyUrl);
                 setters.push(function (importedScript) {
                     if (Object.keys(importedScript).length <= 1 &&
@@ -3551,11 +3539,12 @@
                     isProduction: true,
                     source: parsedComponent.template.content,
                 });
-                var dependencyUrl = key + ".html.js";
+                var dependencyUrl = key + "." + id + ".html.js";
                 var source = "System.register([], " + templateRegisterTemplateParts[0] + compiledTemplate.code + templateRegisterTemplateParts[1] + ");";
                 runtime.inject(dependencyUrl, {
                     source: source,
                 });
+                runtime.registerDependency(key, dependencyUrl);
                 dependencies.push(dependencyUrl);
                 setters.push(function (importedTemplate) {
                     options.render = importedTemplate.render;
@@ -3563,13 +3552,13 @@
                 });
             }
             var compiledStyleResults = parsedComponent.styles.map(function (style, idx) {
-                var dependencyUrl = key + "." + idx + ".css";
+                var dependencyUrl = key + "." + id + "." + idx + ".css";
                 var preprocessStyleResult = preprocessStyle(runtime, key, style);
                 return Promise.resolve(preprocessStyleResult).then(function (preprocessedStyleRecord) {
                     return vueComponentCompilerUtils
                         .compileStyleAsync({
                         filename: key,
-                        id: id,
+                        id: vueId,
                         map: preprocessedStyleRecord.sourceMap,
                         scoped: !!style.scoped,
                         source: preprocessedStyleRecord.source,
@@ -3579,6 +3568,7 @@
                             source: compiledStyle.code,
                             sourceMap: compiledStyle.map,
                         });
+                        runtime.registerDependency(key, dependencyUrl);
                         dependencies.push(dependencyUrl);
                         setters.push(function () { });
                     });
@@ -3644,10 +3634,24 @@
         __extends(RuntimeModuleNamespace, _super);
         function RuntimeModuleNamespace(baseObject) {
             var _this = this;
+            if (Array.isArray(baseObject)) {
+                Object.defineProperty(baseObject, toStringTag, {
+                    value: 'Module',
+                });
+                return baseObject;
+            }
             if (baseObject instanceof Object &&
                 !baseObject.__useDefault &&
                 'default' in baseObject &&
                 Object.keys(baseObject).length <= 1) {
+                Object.keys(baseObject.default).forEach(function (key) {
+                    Object.defineProperty(baseObject, key, {
+                        enumerable: true,
+                        get: function () {
+                            return baseObject.default[key];
+                        },
+                    });
+                });
                 if (typeof baseObject.default === 'function') {
                     if (typeof Symbol !== 'undefined') {
                         Object.defineProperty(baseObject.default, toStringTag, {
@@ -3662,14 +3666,6 @@
                     });
                     return baseObject.default;
                 }
-                Object.keys(baseObject.default).forEach(function (key) {
-                    Object.defineProperty(baseObject, key, {
-                        enumerable: true,
-                        get: function () {
-                            return baseObject.default[key];
-                        },
-                    });
-                });
             }
             _this = _super.call(this, baseObject) || this;
             return _this;
@@ -3705,13 +3701,10 @@
             _this.defaultDependencyVersions = __assign({}, DEFAULT_DEPENDENCY_VERSIONS, defaultDependencyVersions);
             _this.dependencies = new Map();
             _this.dependents = new Map();
-            _this.inject('@empty', {
-                source: 'System.register([], function(e) { return { execute: function() { e("exports", {}) } } })',
-            });
             return _this;
         }
-        Runtime.prototype[(RegisterLoader.traceLoad)] = function (load) {
-            var instance = this.registry.get(load.key);
+        Runtime.prototype[(RegisterLoader.traceLoad)] = function (load, link) {
+            var instance = this.registry.get(load.key) || link.moduleObj;
             var previousInstance = this.registry.get(load.key + "@prev");
             if (instance &&
                 previousInstance &&
@@ -3808,12 +3801,8 @@
         Runtime.prototype.inject = function (key, file) {
             this.injectedFiles.set(key, file);
         };
-        Runtime.prototype.invalidate = function () {
+        Runtime.prototype.invalidate = function (key, parentKey) {
             var _this = this;
-            var pathnames = [];
-            for (var _i = 0; _i < arguments.length; _i++) {
-                pathnames[_i] = arguments[_i];
-            }
             var getDependents = function (normalizedPath) {
                 if (_this.dependents.has(normalizedPath)) {
                     return Array.from(_this.dependents.get(normalizedPath));
@@ -3822,12 +3811,12 @@
             };
             var seen = new Set();
             var invalidationPromise = this.queue.then(function () {
-                var invalidations = __spread(pathnames);
+                var invalidations = [[key, parentKey]];
                 var handleNextInvalidation = function () {
                     if (!invalidations.length)
                         return Promise.resolve();
-                    var pathname = invalidations.shift();
-                    return _this.resolve(pathname).then(function (resolvedPathname) {
+                    var _a = __read(invalidations.shift(), 2), key = _a[0], parentKey = _a[1];
+                    return _this.resolve(key, parentKey).then(function (resolvedPathname) {
                         var e_1, _a;
                         if (!seen.has(resolvedPathname)) {
                             seen.add(resolvedPathname);
@@ -3835,30 +3824,38 @@
                             var instance = _this.registry.get(resolvedPathname);
                             var event = {
                                 propagationStopped: false,
-                                stopPropagation: function () {
+                                defaultPrevented: false,
+                                preventDefault: function () {
                                     this.defaultPrevented = true;
                                 },
+                                stopPropagation: function () {
+                                    this.propagationStopped = true;
+                                },
                             };
-                            if (instance &&
-                                typeof instance.__onAfterUnload === 'function') {
-                                instance.__onAfterUnload(event);
-                            }
                             _this.registry.delete(resolvedPathname);
                             _this.dependencies.delete(resolvedPathname);
                             _this.dependents.delete(resolvedPathname);
-                            if (!event.propagationStopped) {
-                                try {
-                                    for (var dependents_1 = __values(dependents), dependents_1_1 = dependents_1.next(); !dependents_1_1.done; dependents_1_1 = dependents_1.next()) {
-                                        var dependent = dependents_1_1.value;
-                                        invalidations.push(dependent);
+                            if (instance) {
+                                if (typeof instance.__onAfterUnload === 'function') {
+                                    instance.__onAfterUnload(event);
+                                }
+                                if (!event.propagationStopped) {
+                                    try {
+                                        for (var dependents_1 = __values(dependents), dependents_1_1 = dependents_1.next(); !dependents_1_1.done; dependents_1_1 = dependents_1.next()) {
+                                            var dependent = dependents_1_1.value;
+                                            invalidations.push([dependent]);
+                                        }
+                                    }
+                                    catch (e_1_1) { e_1 = { error: e_1_1 }; }
+                                    finally {
+                                        try {
+                                            if (dependents_1_1 && !dependents_1_1.done && (_a = dependents_1.return)) _a.call(dependents_1);
+                                        }
+                                        finally { if (e_1) throw e_1.error; }
                                     }
                                 }
-                                catch (e_1_1) { e_1 = { error: e_1_1 }; }
-                                finally {
-                                    try {
-                                        if (dependents_1_1 && !dependents_1_1.done && (_a = dependents_1.return)) _a.call(dependents_1);
-                                    }
-                                    finally { if (e_1) throw e_1.error; }
+                                if (event.defaultPrevented) {
+                                    _this.registry.set(resolvedPathname + "@prev", instance);
                                 }
                             }
                         }
@@ -3921,8 +3918,23 @@
             return instantiateJavascript(runtime, key, transpiledCode, processAnonRegister);
         });
     }
-    function instantiateJson(runtime, _, code) {
-        return new runtime[RegisterLoader.moduleNamespace](JSON.parse(code));
+    function instantiateJson(_, key, code) {
+        try {
+            var parsed_1 = JSON.parse(code);
+            Object.defineProperty(parsed_1, 'default', {
+                enumerable: true,
+                get: function () {
+                    return parsed_1;
+                },
+            });
+            Object.defineProperty(parsed_1, toStringTag, {
+                value: 'Module',
+            });
+            return parsed_1;
+        }
+        catch (e) {
+            throw new Error("Error parsing json '" + key + "': " + e.message);
+        }
     }
     function instantiateJavascript(runtime, key, codeOrRecord, processAnonRegister) {
         var code = typeof codeOrRecord === 'string' ? codeOrRecord : codeOrRecord.source;
@@ -3933,8 +3945,10 @@
             var code = typeof transpiledCodeOrRecord === 'string'
                 ? annotateCodeSource(transpiledCodeOrRecord, key)
                 : annotateCodeSource(transpiledCodeOrRecord.source, key, transpiledCodeOrRecord.sourceMap);
-            var moduleFactory = new Function('System', 'SystemJS', code);
-            moduleFactory(runtime, runtime);
+            var moduleFactory = new Function('System', 'SystemJS', 'module', code);
+            moduleFactory(runtime, runtime, {
+                id: key,
+            });
             if (!processAnonRegister()) {
                 return EMPTY_MODULE;
             }

@@ -81,6 +81,35 @@ function testRuntimeVariety({ runtimeCode, useSystem }) {
         expect(result.pathname).to.equal('about:blank/package.json');
     });
 
+    it('will load a json array', async () => {
+        const content = await runtimeCode;
+        const page = await browser.newPage();
+
+        await page.addScriptTag({ content });
+
+        const result = await page.evaluate(async function(useSystem) {
+            window['PLNKR_RUNTIME_USE_SYSTEM'] = useSystem;
+
+            const runtime = new window['PlnkrRuntime'].Runtime({
+                host: {
+                    getFileContents(pathname) {
+                        if (pathname === 'array.json')
+                            return JSON.stringify(['a', 'b', 'c']);
+
+                        throw new Error('Not found');
+                    },
+                },
+            });
+
+            const arr = await runtime.import('./array.json');
+
+            return arr;
+        }, useSystem);
+
+        expect(result).to.be.an.array();
+        expect(result).to.equal(['a', 'b', 'c']);
+    });
+
     it('will load lodash@3 and return its VERSION property', async () => {
         const content = await runtimeCode;
         const page = await browser.newPage();

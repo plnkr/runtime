@@ -75,12 +75,28 @@ interface ModuleNamespaceClass {
 
 export class RuntimeModuleNamespace extends ModuleNamespace {
     constructor(baseObject: any) {
+        if (Array.isArray(baseObject)) {
+            Object.defineProperty(baseObject, toStringTag, {
+                value: 'Module',
+            });
+
+            return baseObject;
+        }
         if (
             baseObject instanceof Object &&
             !baseObject.__useDefault &&
             'default' in baseObject &&
             Object.keys(baseObject).length <= 1
         ) {
+            Object.keys(baseObject.default).forEach(key => {
+                Object.defineProperty(baseObject, key, {
+                    enumerable: true,
+                    get: function() {
+                        return baseObject.default[key];
+                    },
+                });
+            });
+
             if (typeof baseObject.default === 'function') {
                 if (typeof Symbol !== 'undefined') {
                     Object.defineProperty(baseObject.default, toStringTag, {
@@ -97,15 +113,6 @@ export class RuntimeModuleNamespace extends ModuleNamespace {
 
                 return baseObject.default;
             }
-
-            Object.keys(baseObject.default).forEach(key => {
-                Object.defineProperty(baseObject, key, {
-                    enumerable: true,
-                    get: function() {
-                        return baseObject.default[key];
-                    },
-                });
-            });
         }
 
         super(baseObject);
@@ -492,22 +499,34 @@ function instantiateCss(
 ): Promise<ModuleNamespace | void> {
     const transpileResult = transpileCssToSystemRegister(runtime, key, code);
 
-    return Promise.resolve(transpileResult).then(transpiledCode => {
-        return instantiateJavascript(
-            runtime,
-            key,
-            transpiledCode,
-            processAnonRegister
-        );
-    });
+    return Promise.resolve(transpileResult).then(transpiledCode =>
+        instantiateJavascript(runtime, key, transpiledCode, processAnonRegister)
+    );
 }
 
 function instantiateJson(
-    runtime: Runtime,
-    _: string,
+    _: Runtime,
+    key: string,
     code: string
 ): ModuleNamespace {
-    return new runtime[RegisterLoader.moduleNamespace](JSON.parse(code));
+    try {
+        const parsed = JSON.parse(code);
+
+        Object.defineProperty(parsed, 'default', {
+            enumerable: true,
+            get() {
+                return parsed;
+            },
+        });
+
+        Object.defineProperty(parsed, toStringTag, {
+            value: 'Module',
+        });
+
+        return parsed;
+    } catch (e) {
+        throw new Error(`Error parsing json '${key}': ${e.message}`);
+    }
 }
 
 function instantiateJavascript(
@@ -558,14 +577,14 @@ function instantiateVue(
 ) {
     const transpileResult = transpileVue(runtime, key, code);
 
-    return Promise.resolve(transpileResult).then(sourceFileRecord => {
-        return instantiateJavascript(
+    return Promise.resolve(transpileResult).then(sourceFileRecord =>
+        instantiateJavascript(
             runtime,
             key,
             sourceFileRecord,
             processAnonRegister
-        );
-    });
+        )
+    );
 }
 
 const SOURCE_MAP_PREFIX =
