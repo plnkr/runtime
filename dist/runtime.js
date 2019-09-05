@@ -3234,7 +3234,7 @@
         var queue = node.children.map(function (child, i) { return ({ parent: node, node: child, i: i }); });
         var _loop_1 = function () {
             var _a = queue.shift(), parent = _a.parent, node_1 = _a.node, i = _a.i;
-            if (typeof node_1 === 'string') {
+            if (typeof node_1 === "string") {
                 parent.children[i] = jsStringEscape(node_1);
                 return "continue";
             }
@@ -3250,11 +3250,11 @@
         var result = node.toStringWithSourceMap();
         return {
             source: result.code,
-            sourceMap: result.map.toJSON(),
+            sourceMap: result.map.toJSON()
         };
     }
     function transpileCssToSystemRegister(runtime, key, code) {
-        if (key.endsWith('.less')) {
+        if (key.endsWith(".less")) {
             return transpileLessToSystemRegister(runtime, key, code);
         }
         return Promise.resolve().then(function () { return sourceMap; }).then(function (sourceMap) {
@@ -3263,17 +3263,17 @@
         });
     }
     function transpileLessToSystemRegister(runtime, key, codeOrRecord) {
-        var sourceMapMappingsResult = runtime.resolve('source-map/lib/mappings.wasm');
-        var sourceMapResult = (runtime.import('source-map'));
+        var sourceMapMappingsResult = runtime.resolve("source-map/lib/mappings.wasm");
+        var sourceMapResult = (runtime.import("source-map"));
         var transpileLessResult = transpileLess(runtime, key, codeOrRecord);
         return Promise.all([
             sourceMapMappingsResult,
             sourceMapResult,
-            transpileLessResult,
+            transpileLessResult
         ]).then(function (_a) {
             var _b = __read(_a, 3), sourceMapMappingsUrl = _b[0], sourceMap = _b[1], transpiled = _b[2];
             sourceMap.SourceMapConsumer.initialize({
-                'lib/mappings.wasm': sourceMapMappingsUrl,
+                "lib/mappings.wasm": sourceMapMappingsUrl
             });
             return sourceMap.SourceMapConsumer.with(transpiled.sourceMap, null, function (consumer) {
                 var node = sourceMap.SourceNode.fromStringWithSourceMap(transpiled.source, consumer);
@@ -3282,23 +3282,23 @@
         });
     }
     function transpileLess(runtime, key, codeOrRecord) {
-        var lessFactoryResult = runtime.import('less/lib/less');
-        var lessAbstractFileManagerResult = (runtime.import('less/lib/less/environment/abstract-file-manager'));
-        var sourceMapMappingsResult = runtime.resolve('source-map/lib/mappings.wasm');
-        var sourceMapResult = (runtime.import('source-map'));
+        var lessFactoryResult = runtime.import("less/lib/less");
+        var lessAbstractFileManagerResult = (runtime.import("less/lib/less/environment/abstract-file-manager"));
+        var sourceMapMappingsResult = runtime.resolve("source-map/lib/mappings.wasm");
+        var sourceMapResult = (runtime.import("source-map"));
         return Promise.all([
             lessFactoryResult,
             lessAbstractFileManagerResult,
             sourceMapMappingsResult,
-            sourceMapResult,
+            sourceMapResult
         ]).then(function (_a) {
             var _b = __read(_a, 4), lessFactory = _b[0], AbstractFileManager = _b[1], sourceMapMappingsUrl = _b[2], sourceMap = _b[3];
             sourceMap.SourceMapConsumer.initialize({
-                'lib/mappings.wasm': sourceMapMappingsUrl,
+                "lib/mappings.wasm": sourceMapMappingsUrl
             });
             var environment = {
                 encodeBase64: btoa,
-                getSourceMapGenerator: function () { return sourceMap.SourceMapGenerator; },
+                getSourceMapGenerator: function () { return sourceMap.SourceMapGenerator; }
             };
             var fileManager = /** @class */ (function (_super) {
                 __extends(class_1, _super);
@@ -3309,7 +3309,7 @@
                     var contentsResult = runtime.host.getFileContents(currentDirectory + "/" + filename);
                     return Promise.resolve(contentsResult).then(function (contents) { return ({
                         filename: filename,
-                        contents: contents,
+                        contents: contents
                     }); });
                 };
                 return class_1;
@@ -3318,48 +3318,22 @@
             var options = {
                 filename: key,
                 sourceMap: {
-                    outputSourceFiles: true,
-                },
+                    outputSourceFiles: true
+                }
             };
-            var code = typeof codeOrRecord === 'string'
-                ? codeOrRecord
-                : codeOrRecord.source;
+            var code = typeof codeOrRecord === "string" ? codeOrRecord : codeOrRecord.source;
             return less.render(code, options).then(function (renderOutput) {
                 return {
                     source: renderOutput.css,
-                    sourceMap: typeof renderOutput.map === 'string'
+                    sourceMap: typeof renderOutput.map === "string"
                         ? JSON.parse(renderOutput.map)
-                        : undefined,
+                        : undefined
                 };
             });
         });
     }
-    var registerTemplate = function ($__export) {
-        var element;
-        var markup;
-        function __onAfterUnload(event) {
-            event.preventDefault();
-        }
-        function __onReplace(event) {
-            event.previousInstance.element.remove();
-        }
-        $__export('__onAfterUnload', __onAfterUnload);
-        $__export('__onReplace', __onReplace);
-        return {
-            execute: function () {
-                markup = '<CSS>';
-                $__export('markup', markup);
-                element = document.createElement('style');
-                element.type = 'text/css';
-                element.innerHTML = markup;
-                document.head.appendChild(element);
-                $__export('element', element);
-            },
-        };
-    };
-    var registerTemplateParts = registerTemplate
-        .toString()
-        .split(/'<CSS>'|"<CSS>"/);
+    var registerTemplate = "function($__export) {\n    var element;\n    var markup;\n\n    function __onAfterUnload(event) {\n        event.preventDefault();\n    }\n\n    function __onReplace(event) {\n        event.previousInstance.element.remove();\n    }\n\n    $__export('__onAfterUnload', __onAfterUnload);\n    $__export('__onReplace', __onReplace);\n\n    return {\n        execute: function() {\n            markup = '<CSS>';\n\n            $__export('markup', markup);\n\n            element = document.createElement('style');\n            element.type = 'text/css';\n            element.innerHTML = markup;\n\n            document.head.appendChild(element);\n\n            $__export('element', element);\n        },\n    };\n}";
+    var registerTemplateParts = registerTemplate.split(/'<CSS>'|"<CSS>"/);
 
     function transpileJs(runtime, key, code) {
         var configFileName = key.endsWith('.js') || key.endsWith('.jsx')

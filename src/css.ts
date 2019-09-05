@@ -152,15 +152,15 @@ export function transpileLess(
   );
 }
 
-const registerTemplate = `function($__export: ExportFunction) {
-    var element: HTMLStyleElement;
-    var markup: string;
+const registerTemplate = `function($__export) {
+    var element;
+    var markup;
 
-    function __onAfterUnload(event: AfterUnloadEvent): void {
+    function __onAfterUnload(event) {
         event.preventDefault();
     }
 
-    function __onReplace(event: ReplaceEvent): void {
+    function __onReplace(event) {
         event.previousInstance.element.remove();
     }
 

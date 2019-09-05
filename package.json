@@ -1,67 +1,67 @@
 {
-    "name": "@plnkr/runtime",
-    "version": "1.0.0-pre.9",
-    "description": "",
-    "main": "dist/runtime.js",
-    "module": "dist/runtime.esm.js",
-    "types": "./dist/index.d.ts",
-    "files": [
-        "dist"
-    ],
-    "scripts": {
-        "build:declarations": "tsc -d",
-        "build": "npm run build:declarations && rollup -c",
-        "test": "lab -vf",
-        "prebuild": "rm -rf ./dist/*",
-        "pretest": "npm run build",
-        "preversion": "npm run test",
-        "version": "git add dist"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/plnkr/runtime.git"
-    },
-    "keywords": [
-        "plnkr",
-        "plunkr",
-        "plunker",
-        "embed",
-        "fiddle",
-        "angular",
-        "angularjs",
-        "react"
-    ],
-    "author": "Geoffrey Goodman",
-    "license": "MIT",
-    "bugs": {
-        "url": "https://github.com/plnkr/runtime/issues"
-    },
-    "homepage": "https://github.com/plnkr/runtime#readme",
-    "devDependencies": {
-        "@types/less": "0.0.33",
-        "@types/react": "^16.4.6",
-        "@types/react-dom": "^16.0.6",
-        "@vue/component-compiler-utils": "^2.1.0",
-        "code": "^5.2.0",
-        "es-module-loader": "github:ggoodman/es-module-loader#feat-extra-hooks",
-        "eslint": "^4.19.1",
-        "eslint-plugin-typescript": "^0.12.0",
-        "js-string-escape": "^1.0.1",
-        "lab": "^15.5.0",
-        "magic-string": "^0.25.0",
-        "puppeteer": "^1.5.0",
-        "rollup": "^0.59.3",
-        "rollup-plugin-commonjs": "^9.1.3",
-        "rollup-plugin-ignore": "^1.0.3",
-        "rollup-plugin-node-builtins": "^2.1.2",
-        "rollup-plugin-node-resolve": "^3.3.0",
-        "rollup-plugin-typescript": "^0.8.1",
-        "source-map": "^0.7.3",
-        "sver": "^1.7.2",
-        "tslib": "^1.9.2",
-        "typescript": "^2.9.2",
-        "typescript-eslint-parser": "^15.0.0",
-        "vue-template-compiler": "^2.5.16"
-    },
-    "dependencies": {}
+  "name": "@plnkr/runtime",
+  "version": "1.0.0-pre.9",
+  "description": "",
+  "main": "dist/runtime.js",
+  "module": "dist/runtime.esm.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build:declarations": "tsc -d",
+    "build": "npm run build:declarations && rollup -c",
+    "test": "lab -vf",
+    "prebuild": "rm -rf ./dist/*",
+    "pretest": "npm run build",
+    "preversion_DISABLED": "npm run test",
+    "version": "git add dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plnkr/runtime.git"
+  },
+  "keywords": [
+    "plnkr",
+    "plunkr",
+    "plunker",
+    "embed",
+    "fiddle",
+    "angular",
+    "angularjs",
+    "react"
+  ],
+  "author": "Geoffrey Goodman",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/plnkr/runtime/issues"
+  },
+  "homepage": "https://github.com/plnkr/runtime#readme",
+  "devDependencies": {
+    "@types/less": "0.0.33",
+    "@types/react": "^16.4.6",
+    "@types/react-dom": "^16.0.6",
+    "@vue/component-compiler-utils": "^2.1.0",
+    "code": "^5.2.0",
+    "es-module-loader": "github:ggoodman/es-module-loader#feat-extra-hooks",
+    "eslint": "^4.19.1",
+    "eslint-plugin-typescript": "^0.12.0",
+    "js-string-escape": "^1.0.1",
+    "lab": "^15.5.0",
+    "magic-string": "^0.25.0",
+    "puppeteer": "^1.5.0",
+    "rollup": "^0.59.3",
+    "rollup-plugin-commonjs": "^9.1.3",
+    "rollup-plugin-ignore": "^1.0.3",
+    "rollup-plugin-node-builtins": "^2.1.2",
+    "rollup-plugin-node-resolve": "^3.3.0",
+    "rollup-plugin-typescript": "^0.8.1",
+    "source-map": "^0.7.3",
+    "sver": "^1.7.2",
+    "tslib": "^1.9.2",
+    "typescript": "^2.9.2",
+    "typescript-eslint-parser": "^15.0.0",
+    "vue-template-compiler": "^2.5.16"
+  },
+  "dependencies": {}
 }
