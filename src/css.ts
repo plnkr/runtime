@@ -1,8 +1,8 @@
-import escapeString from "js-string-escape";
-import Less from "less";
-import * as SourceMap from "source-map";
+import escapeString from 'js-string-escape';
+import Less from 'less';
+import * as SourceMap from 'source-map';
 
-import { Runtime, SourceFile, SourceFileRecord } from ".";
+import { Runtime, SourceFile, SourceFileRecord } from '.';
 
 function createRegisterFunction(node: SourceMap.SourceNode): SourceFileRecord {
   const queue: {
@@ -14,7 +14,7 @@ function createRegisterFunction(node: SourceMap.SourceNode): SourceFileRecord {
   while (queue.length) {
     const { parent, node, i } = queue.shift();
 
-    if (typeof node === "string") {
+    if (typeof node === 'string') {
       parent.children[i] = <any>escapeString(node);
       continue;
     }
@@ -40,15 +40,17 @@ export function transpileCssToSystemRegister(
   key: string,
   code: string
 ): Promise<SourceFileRecord> {
-  if (key.endsWith(".less")) {
+  if (key.endsWith('.less')) {
     return transpileLessToSystemRegister(runtime, key, code);
   }
 
-  return import("source-map").then((sourceMap: typeof SourceMap) => {
-    const node = new sourceMap.SourceNode(1, 0, key, code);
+  return runtime
+    .import('source-map@0.7.3')
+    .then((sourceMap: typeof SourceMap) => {
+      const node = new sourceMap.SourceNode(1, 0, key, code);
 
-    return createRegisterFunction(node);
-  });
+      return createRegisterFunction(node);
+    });
 }
 
 function transpileLessToSystemRegister(
@@ -57,10 +59,10 @@ function transpileLessToSystemRegister(
   codeOrRecord: SourceFile
 ): Promise<SourceFileRecord> {
   const sourceMapMappingsResult = runtime.resolve(
-    "source-map/lib/mappings.wasm"
+    'source-map/lib/mappings.wasm'
   );
   const sourceMapResult = <Promise<typeof SourceMap>>(
-    runtime.import("source-map")
+    runtime.import('source-map')
   );
   const transpileLessResult = transpileLess(runtime, key, codeOrRecord);
 
@@ -69,8 +71,8 @@ function transpileLessToSystemRegister(
     sourceMapResult,
     transpileLessResult
   ]).then(([sourceMapMappingsUrl, sourceMap, transpiled]) => {
-    (<any>sourceMap.SourceMapConsumer).initialize({
-      "lib/mappings.wasm": sourceMapMappingsUrl
+    (sourceMap.SourceMapConsumer as any).initialize({
+      'lib/mappings.wasm': sourceMapMappingsUrl
     });
     return sourceMap.SourceMapConsumer.with(
       transpiled.sourceMap,
@@ -92,15 +94,15 @@ export function transpileLess(
   key: string,
   codeOrRecord: SourceFile
 ): Promise<SourceFileRecord> {
-  const lessFactoryResult = <Promise<any>>runtime.import("less/lib/less");
+  const lessFactoryResult = <Promise<any>>runtime.import('less/lib/less');
   const lessAbstractFileManagerResult = <Promise<any>>(
-    runtime.import("less/lib/less/environment/abstract-file-manager")
+    runtime.import('less/lib/less/environment/abstract-file-manager')
   );
   const sourceMapMappingsResult = runtime.resolve(
-    "source-map/lib/mappings.wasm"
+    'source-map/lib/mappings.wasm'
   );
   const sourceMapResult = <Promise<typeof SourceMap>>(
-    runtime.import("source-map")
+    runtime.import('source-map')
   );
 
   return Promise.all([
@@ -111,7 +113,7 @@ export function transpileLess(
   ]).then(
     ([lessFactory, AbstractFileManager, sourceMapMappingsUrl, sourceMap]) => {
       (<any>sourceMap.SourceMapConsumer).initialize({
-        "lib/mappings.wasm": sourceMapMappingsUrl
+        'lib/mappings.wasm': sourceMapMappingsUrl
       });
 
       const environment: any = {
@@ -138,12 +140,12 @@ export function transpileLess(
         }
       };
       const code =
-        typeof codeOrRecord === "string" ? codeOrRecord : codeOrRecord.source;
+        typeof codeOrRecord === 'string' ? codeOrRecord : codeOrRecord.source;
       return less.render(code, options).then(renderOutput => {
         return {
           source: renderOutput.css,
           sourceMap:
-            typeof renderOutput.map === "string"
+            typeof renderOutput.map === 'string'
               ? JSON.parse(renderOutput.map)
               : undefined
         };

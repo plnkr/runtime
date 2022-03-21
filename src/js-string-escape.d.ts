@@ -1,3 +1,3 @@
 declare module 'js-string-escape' {
-    export default function(input: string): string;
+  export default function(input: string): string;
 }
